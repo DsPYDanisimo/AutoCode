@@ -1,0 +1,40 @@
+(
+echo # Сборка и бинарники
+echo build/
+echo bin/
+echo out/
+echo *.exe
+echo *.dll
+echo *.msi
+echo *.obj
+echo *.pdb
+echo.
+echo # Базы данных
+echo *.db
+echo *.db-journal
+echo.
+echo # Логи и бэкапы
+echo data/logs/
+echo data/ecu_backups/*.bin
+echo data/ecu_backups/*.json
+echo data/exports/
+echo.
+echo # Кэш Python
+echo __pycache__/
+echo *.pyc
+echo.
+echo # IDE
+echo .vscode/
+echo .vs/
+echo *.vcxproj
+echo *.sln
+echo.
+echo # Временные файлы
+echo .claude/
+echo *.ico
+echo tools/
+echo.
+echo # Документация
+echo *.docx
+echo *.pptx
+) > .gitignore

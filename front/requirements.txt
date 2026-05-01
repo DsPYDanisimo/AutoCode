@@ -1,0 +1,10 @@
+PyQt5>=5.15.0
+requests>=2.25.0
+pyserial>=3.5
+python-can>=4.0.0
+obd>=0.7.1
+websockets>=10.0
+matplotlib>=3.3.0
+numpy>=1.19.0
+# Опционально: для обнаружения не спаренных BT-устройств (PyBluez discovery)
+# PyBluez>=0.23   # pip install PyBluez (требует Visual C++ Build Tools на Windows)
