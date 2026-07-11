@@ -18,7 +18,7 @@ from PyQt5.QtGui import QFont, QPalette, QColor, QIcon
 from api_client import ECUAPIClient
 from ecu_backup_tab import ECUReadBackupDialog, BACKUP_DIR
 from calibration_editor import CalibrationData, open_parameter_editor
-from translations import get_tr, LANG_CODES, LANG_NAMES
+from translations import get_tr
 
 # Настройка логирования
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "logs")
@@ -784,7 +784,7 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: QSettings, parent=None):
         super().__init__(parent)
         self.settings = settings
-        self._tr = get_tr(self.settings.value("ui/language", "ru"))
+        self._tr = get_tr("ru")
         self.setWindowTitle(self._tr["settings_title"])
         self.setMinimumWidth(480)
         self.setModal(True)
@@ -798,6 +798,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._tab_diagnostics(), self._tr["tab_diag"])
         tabs.addTab(self._tab_interface(),   self._tr["tab_ui"])
         tabs.addTab(self._tab_about(),       self._tr["tab_about"])
+        tabs.addTab(self._tab_docs(),        self._tr["tab_docs"])
         root.addWidget(tabs)
 
         _btn_w = 140
@@ -913,29 +914,29 @@ class SettingsDialog(QDialog):
         self.spin_log_lines.setRange(50, 10000)
         self.spin_log_lines.setSingleStep(50)
         self.spin_log_lines.setValue(int(self.settings.value("ui/log_max_lines", 500)))
-        self.spin_log_lines.setSuffix(" строк")
-        lay.addRow("Максимум строк в логе:", self.spin_log_lines)
+        self.spin_log_lines.setSuffix(self._tr["suffix_lines"])
+        lay.addRow(self._tr["set_log_lines"], self.spin_log_lines)
 
         self.chk_autoscroll = QCheckBox()
         self.chk_autoscroll.setChecked(self.settings.value("ui/autoscroll_log", True, bool))
-        lay.addRow("Авто-прокрутка лога:", self.chk_autoscroll)
+        lay.addRow(self._tr["set_autoscroll"], self.chk_autoscroll)
 
         self.chk_log_timestamps = QCheckBox()
         self.chk_log_timestamps.setChecked(self.settings.value("ui/log_timestamps", True, bool))
-        lay.addRow("Временные метки в логе:", self.chk_log_timestamps)
+        lay.addRow(self._tr["set_timestamps"], self.chk_log_timestamps)
 
         self.combo_log_level = QComboBox()
         self.combo_log_level.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
         self.combo_log_level.setCurrentText(self.settings.value("ui/log_level", "INFO"))
-        lay.addRow("Уровень логирования:", self.combo_log_level)
+        lay.addRow(self._tr["set_log_level"], self.combo_log_level)
 
         self.chk_confirm_clear = QCheckBox()
         self.chk_confirm_clear.setChecked(self.settings.value("ui/confirm_clear_dtc", True, bool))
-        lay.addRow("Подтверждение при стирании DTC:", self.chk_confirm_clear)
+        lay.addRow(self._tr["set_confirm_clear"], self.chk_confirm_clear)
 
         self.chk_confirm_write_cal = QCheckBox()
         self.chk_confirm_write_cal.setChecked(self.settings.value("ui/confirm_write_cal", True, bool))
-        lay.addRow("Подтверждение при записи калибровки:", self.chk_confirm_write_cal)
+        lay.addRow(self._tr["set_confirm_write"], self.chk_confirm_write_cal)
 
         return w
 
@@ -971,6 +972,231 @@ class SettingsDialog(QDialog):
         note.setWordWrap(True)
         lay.addWidget(note)
 
+        return w
+
+    def _tab_docs(self):
+        _DOC = {
+            "ru": """
+<h2 style='color:#5b9bd5;'>Документация — Диагностика и калибровка ЭБУ v1.0</h2>
+
+<h3 style='color:#aaa;'>1. Назначение программы</h3>
+<p>Программа предназначена для диагностики электронного блока управления (ЭБУ) автомобиля через
+OBD-II/J2534/PassThru адаптеры. Позволяет считывать и сбрасывать коды неисправностей (DTC),
+мониторить параметры двигателя в реальном времени и редактировать калибровочные данные ЭБУ.</p>
+
+<h3 style='color:#aaa;'>2. Поддерживаемые протоколы</h3>
+<ul>
+<li><b>OBD-II (SAE J1979)</b> — стандартная бортовая диагностика; поддерживается большинством
+    автомобилей с 1996 г.</li>
+<li><b>UDS (ISO 14229)</b> — унифицированные диагностические сервисы; применяется в современных
+    ECU европейских и азиатских производителей.</li>
+<li><b>J2534 / PassThru</b> — стандарт SAE для профессиональных адаптеров; работает через DLL
+    адаптера (Mongoose Pro JLR и совместимые).</li>
+<li><b>KWP2000 (ISO 14230)</b> — устаревший протокол; поддерживается для диагностики автомобилей
+    2000–2008 г.в.</li>
+<li><b>CAN (ISO 15765)</b> — современная шина; используется на транспортных средствах с 2004 г.</li>
+</ul>
+
+<h3 style='color:#aaa;'>3. Подключение к ЭБУ</h3>
+<ol>
+<li>Подключите OBD-II адаптер к диагностическому разъёму автомобиля (под приборной панелью).</li>
+<li>В верхней панели выберите <b>Тип</b> порта: COM / Bluetooth / J2534.</li>
+<li>Выберите <b>Устройство</b> из выпадающего списка (кнопка ↻ — обновить список).</li>
+<li>Укажите <b>Протокол</b> (или оставьте «Автоопределение»).</li>
+<li>Нажмите <b>Подключиться</b>. После успешного соединения индикатор станет зелёным.</li>
+</ol>
+<p style='color:#ff9800;'>⚠ При использовании Bluetooth убедитесь, что адаптер сопряжён
+с компьютером в настройках ОС до запуска программы.</p>
+
+<h3 style='color:#aaa;'>4. Коды неисправностей (DTC)</h3>
+<p>Вкладка <b>Коды ошибок</b> — основной инструмент диагностики.</p>
+<ul>
+<li><b>Считать ошибки</b> — отправляет запрос Mode 03/19 к ЭБУ и заполняет таблицу.</li>
+<li><b>Стереть ошибки</b> — отправляет команду Mode 04; требует подтверждения.</li>
+<li><b>База DTC</b> — локальная база из более 300 кодов ISO 15031 / SAE J2012 с описаниями
+    и возможными причинами.</li>
+</ul>
+<p>Каждая строка таблицы содержит:</p>
+<ul>
+<li><b>Код</b> — стандартный DTC (P/C/B/U + 4 цифры).</li>
+<li><b>Описание</b> — расшифровка на русском языке. Наведите курсор для просмотра причин.</li>
+<li><b>Статус</b> — Active / Confirmed / Pending / Historical / Stored (цветовая индикация).</li>
+<li><b>Источник</b> — модуль ЭБУ, зафиксировавший ошибку.</li>
+<li><b>Система</b> — Трансмиссия/Двигатель, Шасси, Кузов, Сеть CAN.</li>
+<li><b>Тяжесть</b> — от Инфо (1) до Критическая (5).</li>
+</ul>
+<p>Столбцы таблицы можно изменять в ширину — потяните за границу заголовка.</p>
+
+<h3 style='color:#aaa;'>5. Live-данные</h3>
+<p>Вкладка <b>Live данные</b> отображает параметры двигателя в режиме реального времени:</p>
+<ul>
+<li>Обороты двигателя (RPM)</li>
+<li>Скорость автомобиля (км/ч)</li>
+<li>Температура охлаждающей жидкости (°C)</li>
+<li>Положение дроссельной заслонки (%)</li>
+<li>Напряжение бортовой сети (В)</li>
+<li>Массовый расход воздуха (г/с)</li>
+<li>Температура впускного воздуха (°C)</li>
+<li>Давление топлива (кПа)</li>
+</ul>
+<p>Интервал обновления настраивается в разделе <b>Настройки → Диагностика</b>.</p>
+
+<h3 style='color:#aaa;'>6. Информация об ЭБУ</h3>
+<p>Вкладка <b>Информация ЭБУ</b> показывает идентификационные данные блока управления:
+VIN, номер детали, тип ЭБУ, калибровочный идентификатор, версию ПО и аппаратную версию.
+Данные считываются через сервисы UDS ReadDataByIdentifier (0x22).</p>
+
+<h3 style='color:#aaa;'>7. Калибровка параметров</h3>
+<p style='color:#e57373;'>⚠ Функция предназначена только для опытных специалистов!</p>
+<p>Доступны следующие таблицы калибровки:</p>
+<ul>
+<li><b>Угол зажигания</b> — 3D-карта опережения (обороты × нагрузка).</li>
+<li><b>Топливная карта</b> — 3D-карта впрыска топлива.</li>
+<li><b>Управление турбиной</b> — давление наддува по оборотам.</li>
+<li><b>Ограничитель оборотов</b> — порог отсечки топлива.</li>
+</ul>
+<p>Перед редактированием всегда создавайте резервную копию (<b>Считать с ЭБУ</b>).
+Запись в ЭБУ необратима без резервной копии.</p>
+
+<h3 style='color:#aaa;'>8. Журнал событий</h3>
+<p>Нижняя панель содержит журнал всех операций с временными метками.
+Журнал можно экспортировать кнопкой <b>Экспорт логов</b> — файл сохраняется в папку
+<code>data/logs/</code> рядом с исполняемым файлом.</p>
+
+<h3 style='color:#aaa;'>9. Настройки</h3>
+<p>Вызываются кнопкой ⚙ в правом верхнем углу. Сохраняются между сеансами:</p>
+<ul>
+<li><b>Подключение</b> — порт, протокол, таймаут, авто-переподключение.</li>
+<li><b>Диагностика</b> — автоматическое считывание DTC, интервалы обновления.</li>
+<li><b>Интерфейс</b> — язык приложения (RU/EN/DE), параметры журнала.</li>
+</ul>
+
+<h3 style='color:#aaa;'>10. Требования</h3>
+<ul>
+<li>Windows 10/11 (x64)</li>
+<li>OBD-II адаптер: ELM327 (COM / Bluetooth) или J2534-совместимый</li>
+<li>Python 3.10+ / PyQt5 5.15+  <i>(для запуска из исходников)</i></li>
+</ul>
+""",
+            "en": """
+<h2 style='color:#5b9bd5;'>Documentation — ECU Diagnostics & Calibration v1.0</h2>
+
+<h3 style='color:#aaa;'>1. Purpose</h3>
+<p>This application performs vehicle ECU diagnostics via OBD-II/J2534/PassThru adapters.
+It reads and clears Diagnostic Trouble Codes (DTCs), monitors real-time engine parameters,
+and edits ECU calibration data.</p>
+
+<h3 style='color:#aaa;'>2. Supported Protocols</h3>
+<ul>
+<li><b>OBD-II (SAE J1979)</b> — standard on-board diagnostics; supported by most vehicles since 1996.</li>
+<li><b>UDS (ISO 14229)</b> — Unified Diagnostic Services; used in modern ECUs.</li>
+<li><b>J2534 / PassThru</b> — SAE standard for professional adapters (Mongoose Pro JLR and compatible).</li>
+<li><b>KWP2000 (ISO 14230)</b> — legacy protocol for 2000–2008 vehicles.</li>
+<li><b>CAN (ISO 15765)</b> — modern bus; standard since 2004.</li>
+</ul>
+
+<h3 style='color:#aaa;'>3. Connecting to ECU</h3>
+<ol>
+<li>Plug the OBD-II adapter into the vehicle's diagnostic port (under the dashboard).</li>
+<li>Select the <b>Port type</b>: COM / Bluetooth / J2534.</li>
+<li>Choose the <b>Device</b> from the dropdown (↻ refreshes the list).</li>
+<li>Set the <b>Protocol</b> or leave on Auto-detect.</li>
+<li>Click <b>Connect</b>. The indicator turns green on success.</li>
+</ol>
+
+<h3 style='color:#aaa;'>4. Diagnostic Trouble Codes (DTC)</h3>
+<p>The <b>Error Codes</b> tab is the primary diagnostic tool. Each row shows:
+Code, Description (hover for causes), Status, Source module, System, and Severity.
+Columns can be resized by dragging the header borders.</p>
+
+<h3 style='color:#aaa;'>5. Live Data</h3>
+<p>Real-time engine parameters: RPM, Speed, Coolant Temp, Throttle Position,
+Voltage, MAF, Intake Temp, Fuel Pressure. Update interval configurable in Settings.</p>
+
+<h3 style='color:#aaa;'>6. ECU Info</h3>
+<p>Shows VIN, part number, ECU type, calibration ID, software and hardware versions
+read via UDS ReadDataByIdentifier (0x22).</p>
+
+<h3 style='color:#aaa;'>7. Calibration</h3>
+<p style='color:#e57373;'>⚠ For experienced specialists only! Always back up before writing.</p>
+<p>Available tables: Ignition Timing, Fuel Map, Boost Control, Rev Limiter.</p>
+
+<h3 style='color:#aaa;'>8. Requirements</h3>
+<ul>
+<li>Windows 10/11 (x64)</li>
+<li>ELM327 (COM/Bluetooth) or J2534-compatible adapter</li>
+<li>Python 3.10+ / PyQt5 5.15+ (for source runs)</li>
+</ul>
+""",
+            "de": """
+<h2 style='color:#5b9bd5;'>Dokumentation — ECU-Diagnose & Kalibrierung v1.0</h2>
+
+<h3 style='color:#aaa;'>1. Zweck</h3>
+<p>Das Programm führt Fahrzeug-ECU-Diagnosen über OBD-II/J2534/PassThru-Adapter durch.
+Es liest und löscht Fehlercodes (DTC), überwacht Motorparameter in Echtzeit
+und bearbeitet ECU-Kalibrierdaten.</p>
+
+<h3 style='color:#aaa;'>2. Unterstützte Protokolle</h3>
+<ul>
+<li><b>OBD-II (SAE J1979)</b> — Standard-Borddiagnose; unterstützt seit 1996.</li>
+<li><b>UDS (ISO 14229)</b> — Unified Diagnostic Services für moderne ECUs.</li>
+<li><b>J2534 / PassThru</b> — SAE-Standard für professionelle Adapter.</li>
+<li><b>KWP2000 (ISO 14230)</b> — Älteres Protokoll für Fahrzeuge 2000–2008.</li>
+<li><b>CAN (ISO 15765)</b> — Moderner Bus; Standard seit 2004.</li>
+</ul>
+
+<h3 style='color:#aaa;'>3. Verbindung mit ECU</h3>
+<ol>
+<li>OBD-II-Adapter in den Diagnoseanschluss des Fahrzeugs stecken.</li>
+<li><b>Porttyp</b> auswählen: COM / Bluetooth / J2534.</li>
+<li><b>Gerät</b> aus der Dropdown-Liste wählen (↻ aktualisiert).</li>
+<li><b>Protokoll</b> einstellen oder auf Automatisch lassen.</li>
+<li><b>Verbinden</b> klicken. Grüner Indikator = Erfolg.</li>
+</ol>
+
+<h3 style='color:#aaa;'>4. Fehlercodes (DTC)</h3>
+<p>Registerkarte <b>Fehlercodes</b>: Code, Beschreibung (Maus drüber für Ursachen),
+Status, Quelle, System, Schweregrad. Spaltenbreiten per Drag anpassbar.</p>
+
+<h3 style='color:#aaa;'>5. Live-Daten</h3>
+<p>Echtzeit-Motorparameter: Drehzahl, Geschwindigkeit, Kühlmitteltemperatur,
+Drosselklappenstellung, Spannung, Luftmasse, Ansaugtemperatur, Kraftstoffdruck.</p>
+
+<h3 style='color:#aaa;'>6. ECU-Info</h3>
+<p>Zeigt VIN, Teilenummer, ECU-Typ, Kalibrierungs-ID, SW- und HW-Version via UDS 0x22.</p>
+
+<h3 style='color:#aaa;'>7. Kalibrierung</h3>
+<p style='color:#e57373;'>⚠ Nur für Fachleute! Immer vorher sichern.</p>
+<p>Verfügbare Tabellen: Zündzeitpunkt, Kraftstoffkarte, Laderdruckregelung, Drehzahlbegrenzer.</p>
+
+<h3 style='color:#aaa;'>8. Systemanforderungen</h3>
+<ul>
+<li>Windows 10/11 (x64)</li>
+<li>ELM327 (COM/Bluetooth) oder J2534-kompatibler Adapter</li>
+<li>Python 3.10+ / PyQt5 5.15+</li>
+</ul>
+""",
+        }
+
+        html_content = _DOC["ru"]
+        _bg = "#191919"
+        _fg = "#e0e0e0"
+
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        doc_view = QTextEdit()
+        doc_view.setReadOnly(True)
+        doc_view.setStyleSheet(
+            f"QTextEdit {{ background:{_bg}; color:{_fg}; border:none; }}"
+        )
+        doc_view.setHtml(
+            f"<div style='font-family:\"Segoe UI\",Arial,sans-serif; font-size:12px; "
+            f"color:{_fg}; background:{_bg}; padding:16px 20px; line-height:1.7;'>"
+            f"{html_content}</div>"
+        )
+        lay.addWidget(doc_view)
         return w
 
     def _save(self):
@@ -1488,12 +1714,15 @@ class ECU_DiagnosticApp(QMainWindow):
         self.errors_table.setHorizontalHeaderLabels(
             ["Код", "Описание", "Статус", "Источник", "Система", "Тяжесть"])
         hdr = self.errors_table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.Fixed);        self.errors_table.setColumnWidth(0, 85)
-        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.Fixed);        self.errors_table.setColumnWidth(2, 100)
-        hdr.setSectionResizeMode(3, QHeaderView.Fixed);        self.errors_table.setColumnWidth(3, 75)
-        hdr.setSectionResizeMode(4, QHeaderView.Fixed);        self.errors_table.setColumnWidth(4, 155)
-        hdr.setSectionResizeMode(5, QHeaderView.Fixed);        self.errors_table.setColumnWidth(5, 90)
+        hdr.setSectionResizeMode(QHeaderView.Interactive)
+        hdr.setStretchLastSection(False)
+        self.errors_table.setColumnWidth(0, 85)
+        self.errors_table.setColumnWidth(1, 280)
+        self.errors_table.setColumnWidth(2, 100)
+        self.errors_table.setColumnWidth(3, 80)
+        self.errors_table.setColumnWidth(4, 170)
+        self.errors_table.setColumnWidth(5, 90)
+        hdr.setMinimumSectionSize(50)
         self.errors_table.setAlternatingRowColors(True)
         self.errors_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.errors_table.verticalHeader().setVisible(False)
@@ -1573,7 +1802,7 @@ class ECU_DiagnosticApp(QMainWindow):
         self.info_text = QTextEdit()
         self.info_text.setReadOnly(True)
         self.info_text.setStyleSheet(
-            "QTextEdit { background:#ffffff; color:#111; border:none; }"
+            "QTextEdit { background:#191919; color:#e0e0e0; border:none; }"
         )
         info_layout.addWidget(self.info_text)
 
@@ -2306,14 +2535,14 @@ class ECU_DiagnosticApp(QMainWindow):
     def show_ecu_info(self):
         _FONT = '"Segoe UI", Arial, sans-serif'
         _CSS  = (
-            f"font-family:{_FONT}; font-size:12px; color:#111; "
-            "background:#fff; padding:12px 16px; line-height:1.6;"
+            f"font-family:{_FONT}; font-size:12px; color:#e0e0e0; "
+            "background:#191919; padding:12px 16px; line-height:1.6;"
         )
 
         if not self.api_client.is_connected:
             self.info_text.setHtml(
                 f"<div style='{_CSS}'>"
-                "<span style='color:#c0392b;'>⚠ Нет подключения к ЭБУ</span>"
+                "<span style='color:#e57373;'>⚠ Нет подключения к ЭБУ</span>"
                 "</div>"
             )
             return
@@ -2393,9 +2622,8 @@ class ECU_DiagnosticApp(QMainWindow):
             return f"<b>{text}</b><br>"
 
         def module_hdr(code, description):
-            """Заголовок модуля ЭБУ — крупнее, синий цвет."""
             return (
-                f"<span style='font-size:12px; font-weight:700; color:#1a1a1a;'>"
+                f"<span style='font-size:12px; font-weight:700; color:#5b9bd5;'>"
                 f"{code} - {description}</span><br>"
             )
 
@@ -2727,7 +2955,7 @@ class ECU_DiagnosticApp(QMainWindow):
             # Очищаем информацию об ЭБУ
             self.info_text.setHtml(
                 "<div style='font-family:\"Segoe UI\",Arial,sans-serif; font-size:12px; "
-                "color:#888; padding:12px 16px;'>Нет подключения</div>"
+                "color:#888; background:#191919; padding:12px 16px;'>Нет подключения</div>"
             )
             # Очищаем ошибки
             self.errors_table.setRowCount(0)

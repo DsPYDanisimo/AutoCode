@@ -1,75 +1,150 @@
+
 import os
+
 import json
+
 from datetime import datetime
 
-# Конфигурация приложения
+
+
+# РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РїСЂРёР»РѕР¶РµРЅРёСЏ
+
 class Config:
-    # Пути
+
+    # РџСѓС‚Рё
+
     BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+
     DATA_DIR = os.path.join(BASE_DIR, "data")
+
     LOGS_DIR = os.path.join(DATA_DIR, "logs")
+
     BACKUP_DIR = os.path.join(DATA_DIR, "ecu_backups")
+
     EXPORT_DIR = os.path.join(DATA_DIR, "exports")
+
     
-    # Настройки сервера
+
+    # РќР°СЃС‚СЂРѕР№РєРё СЃРµСЂРІРµСЂР°
+
     DEFAULT_HOST = "localhost"
+
     DEFAULT_PORT = 8080
+
     
-    # Настройки мониторинга
+
+    # РќР°СЃС‚СЂРѕР№РєРё РјРѕРЅРёС‚РѕСЂРёРЅРіР°
+
     MONITOR_INTERVAL = 2
+
     QUALITY_INTERVAL = 5
+
     
-    # Настройки базы данных
+
+    # РќР°СЃС‚СЂРѕР№РєРё Р±Р°Р·С‹ РґР°РЅРЅС‹С…
+
     DB_PATH = os.path.join(BASE_DIR, "ecu_diagnostic.db")
+
     
-    # Поддерживаемые протоколы
+
+    # РџРѕРґРґРµСЂР¶РёРІР°РµРјС‹Рµ РїСЂРѕС‚РѕРєРѕР»С‹
+
     SUPPORTED_PROTOCOLS = ["OBD-II", "CAN", "KWP2000", "UDS", "J1850", "ISO9141"]
+
     
-    # Цвета для интерфейса
+
+    # Р¦РІРµС‚Р° РґР»СЏ РёРЅС‚РµСЂС„РµР№СЃР°
+
     COLORS = {
+
         "success": "#4CAF50",
+
         "warning": "#FFC107",
+
         "error": "#F44336",
+
         "info": "#2196F3",
+
         "background": "#353535",
+
         "text": "#FFFFFF",
+
         "text_secondary": "#AAAAAA"
+
     }
+
     
+
     @classmethod
+
     def ensure_dirs(cls):
-        """Создание необходимых директорий"""
+
+        """РЎРѕР·РґР°РЅРёРµ РЅРµРѕР±С…РѕРґРёРјС‹С… РґРёСЂРµРєС‚РѕСЂРёР№"""
+
         for dir_path in [cls.DATA_DIR, cls.LOGS_DIR, cls.BACKUP_DIR, cls.EXPORT_DIR]:
+
             os.makedirs(dir_path, exist_ok=True)
+
     
+
     @classmethod
+
     def get_log_filename(cls, prefix="app"):
-        """Получение имени файла лога с датой"""
+
+        """РџРѕР»СѓС‡РµРЅРёРµ РёРјРµРЅРё С„Р°Р№Р»Р° Р»РѕРіР° СЃ РґР°С‚РѕР№"""
+
         return os.path.join(cls.LOGS_DIR, f"{prefix}_{datetime.now().strftime('%Y%m%d')}.log")
+
     
+
     @classmethod
+
     def save_settings(cls, settings):
-        """Сохранение настроек"""
+
+        """РЎРѕС…СЂР°РЅРµРЅРёРµ РЅР°СЃС‚СЂРѕРµРє"""
+
         settings_file = os.path.join(cls.DATA_DIR, "settings.json")
+
         try:
+
             with open(settings_file, 'w', encoding='utf-8') as f:
+
                 json.dump(settings, f, indent=2, ensure_ascii=False)
+
             return True
+
         except Exception as e:
-            print(f"Ошибка сохранения настроек: {e}")
+
+            print(f"РћС€РёР±РєР° СЃРѕС…СЂР°РЅРµРЅРёСЏ РЅР°СЃС‚СЂРѕРµРє: {e}")
+
             return False
+
     
+
     @classmethod
+
     def load_settings(cls):
-        """Загрузка настроек"""
+
+        """Р—Р°РіСЂСѓР·РєР° РЅР°СЃС‚СЂРѕРµРє"""
+
         settings_file = os.path.join(cls.DATA_DIR, "settings.json")
+
         try:
+
             if os.path.exists(settings_file):
+
                 with open(settings_file, 'r', encoding='utf-8') as f:
+
                     return json.load(f)
+
         except Exception as e:
-            print(f"Ошибка загрузки настроек: {e}")
+
+            print(f"РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё РЅР°СЃС‚СЂРѕРµРє: {e}")
+
         return {}
 
-# Создаем необходимые директории при импорте
+
+
+# РЎРѕР·РґР°РµРј РЅРµРѕР±С…РѕРґРёРјС‹Рµ РґРёСЂРµРєС‚РѕСЂРёРё РїСЂРё РёРјРїРѕСЂС‚Рµ
+
 Config.ensure_dirs()
