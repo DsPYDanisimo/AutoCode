@@ -640,14 +640,19 @@ class ECUBackupTab(QWidget):
 # Воркер считывания прошивки с ЭБУ
 # ---------------------------------------------------------------------------
 class FirmwareReadWorker(QThread):
-    """Симулирует считывание прошивки с ЭБУ и сохраняет .bin файл."""
+    """
+    Считывает прошивку с ЭБУ через api_client.read_memory() (J2534 или ELM327/CAN —
+    см. ECUAPIClient._uds_transport). Если api_client не передан или ЭБУ не
+    подключён, откатывается на демо-режим (случайные данные, помечено "[Демо]") —
+    так диалог остаётся пригоден для показа интерфейса без железа.
+    """
 
     progress = pyqtSignal(int)    # 0..100
     status   = pyqtSignal(str)    # текстовый статус
     finished = pyqtSignal(str)    # путь к сохранённому файлу
     error    = pyqtSignal(str)    # сообщение об ошибке
 
-    # Размеры генерируемого файла по типу
+    # Размеры считывания/генерации по типу
     READ_SIZES = {
         "Full":        4 * 1024 * 1024,   # 4 МБ
         "Calibration": 256 * 1024,        # 256 КБ
@@ -663,37 +668,72 @@ class FirmwareReadWorker(QThread):
         (98, "[Демо] Сохранение файла…"),
     ]
 
-    def __init__(self, dst_path: str, read_type: str):
+    START_ADDRESS = 0x00000000
+    CHUNK_SIZE    = 0x800   # 2 КБ за один UDS ReadMemoryByAddress запрос
+
+    def __init__(self, dst_path: str, read_type: str, api_client=None):
         super().__init__()
-        self.dst_path  = dst_path
-        self.read_type = read_type
+        self.dst_path   = dst_path
+        self.read_type  = read_type
+        self.api_client = api_client
 
     def run(self):
+        size = self.READ_SIZES.get(self.read_type, 4 * 1024 * 1024)
         try:
-            import time, random
-            size = self.READ_SIZES.get(self.read_type, 4 * 1024 * 1024)
-
-            for pct, msg in self.STEPS:
-                self.status.emit(msg)
-                self.progress.emit(pct)
-                time.sleep(random.uniform(0.05, 0.12))
-
-            # Генерируем псевдо-прошивку (реальная реализация читает через API)
-            self.status.emit("Запись файла на диск…")
-            chunk = 64 * 1024
-            written = 0
-            with open(self.dst_path, "wb") as f:
-                while written < size:
-                    to_write = min(chunk, size - written)
-                    f.write(bytes([random.randint(0, 255) for _ in range(to_write)]))
-                    written += to_write
-                    self.progress.emit(98 + int(written * 2 / size))
-
-            self.progress.emit(100)
-            self.status.emit("Готово!")
-            self.finished.emit(self.dst_path)
+            if self.api_client is not None and getattr(self.api_client, "is_connected", False):
+                self._run_real(size)
+            else:
+                self._run_demo(size)
         except Exception as e:
             self.error.emit(str(e))
+
+    def _run_real(self, size: int):
+        """Реальное чтение через UDS ReadMemoryByAddress (J2534 или ELM327/CAN)."""
+        self.status.emit("Считывание памяти ЭБУ…")
+        address = self.START_ADDRESS
+        written = 0
+
+        with open(self.dst_path, "wb") as f:
+            while written < size:
+                to_read = min(self.CHUNK_SIZE, size - written)
+                data = self.api_client.read_memory(address, to_read)
+                if not data or len(data) != to_read:
+                    raise RuntimeError(
+                        f"Обрыв чтения на смещении 0x{written:X} — ЭБУ не ответил "
+                        f"или вернул неполные данные."
+                    )
+                f.write(data)
+                written += len(data)
+                address += len(data)
+                self.progress.emit(int(written * 100 / size))
+                self.status.emit(f"Считано {written // 1024} / {size // 1024} КБ…")
+
+        self.progress.emit(100)
+        self.status.emit("Готово!")
+        self.finished.emit(self.dst_path)
+
+    def _run_demo(self, size: int):
+        """Демо-режим — используется, когда нет подключения к реальному ЭБУ."""
+        import time, random
+
+        for pct, msg in self.STEPS:
+            self.status.emit(msg)
+            self.progress.emit(pct)
+            time.sleep(random.uniform(0.05, 0.12))
+
+        self.status.emit("[Демо] Сохранение файла…")
+        chunk = 64 * 1024
+        written = 0
+        with open(self.dst_path, "wb") as f:
+            while written < size:
+                to_write = min(chunk, size - written)
+                f.write(bytes([random.randint(0, 255) for _ in range(to_write)]))
+                written += to_write
+                self.progress.emit(98 + int(written * 2 / size))
+
+        self.progress.emit(100)
+        self.status.emit("Готово! (демо-режим)")
+        self.finished.emit(self.dst_path)
 
 
 # ---------------------------------------------------------------------------
@@ -741,16 +781,15 @@ class ECUReadBackupDialog(QDialog):
         inner.setSpacing(10)
         inner.setContentsMargins(10, 10, 10, 10)
 
-        # ── Демо-баннер ──────────────────────────────────────────────────
-        demo_banner = QLabel(
-            "⚠️ Демо-режим: реальное считывание прошивки с ЭБУ ещё не реализовано. "
-            "Файл ниже будет заполнен случайными данными и НЕ пригоден для восстановления реального автомобиля."
+        # ── Баннер режима (демо/реальный — уточняется в _load_ecu_info) ────
+        self.demo_banner = QLabel(
+            "⚠️ Проверка подключения к ЭБУ…"
         )
-        demo_banner.setWordWrap(True)
-        demo_banner.setStyleSheet(
+        self.demo_banner.setWordWrap(True)
+        self.demo_banner.setStyleSheet(
             "background:#4a3300; color:#ffc107; padding:8px; border-radius:4px; font-weight:bold;"
         )
-        inner.addWidget(demo_banner)
+        inner.addWidget(self.demo_banner)
 
         # ── 1. Статус подключения ─────────────────────────────────────────
         conn_group = QGroupBox("Подключённый ЭБУ")
@@ -837,15 +876,37 @@ class ECUReadBackupDialog(QDialog):
 
     # ── Logic ─────────────────────────────────────────────────────────────
 
+    def _set_demo_banner(self, connected: bool):
+        """Обновляет баннер: честно отражает, будет ли следующее чтение реальным
+        (ЭБУ подключён — J2534 или ELM327/CAN) или демонстрационным."""
+        if connected:
+            self.demo_banner.setText(
+                "✅ ЭБУ подключён — считывание будет реальным (UDS ReadMemoryByAddress)."
+            )
+            self.demo_banner.setStyleSheet(
+                "background:#1b3a1b; color:#8bc34a; padding:8px; border-radius:4px; font-weight:bold;"
+            )
+        else:
+            self.demo_banner.setText(
+                "⚠️ ЭБУ не подключён — считывание будет демонстрационным (случайные данные, "
+                "НЕ пригодны для восстановления реального автомобиля). Подключитесь через "
+                "J2534 или ELM327/CAN, чтобы считать реальную прошивку."
+            )
+            self.demo_banner.setStyleSheet(
+                "background:#4a3300; color:#ffc107; padding:8px; border-radius:4px; font-weight:bold;"
+            )
+
     def _load_ecu_info(self):
         """Запрашивает информацию об ЭБУ через api_client."""
         if not self.api_client:
             self.lbl_status.setText("❌ API клиент не передан")
             self.lbl_status.setStyleSheet("color: #f44336;")
             self.btn_read.setEnabled(False)
+            self._set_demo_banner(connected=False)
             return
 
         connected = getattr(self.api_client, 'is_connected', False)
+        self._set_demo_banner(connected=connected)
         if not connected:
             self.lbl_status.setText("❌ ЭБУ не подключён")
             self.lbl_status.setStyleSheet("color: #f44336;")
@@ -888,7 +949,7 @@ class ECUReadBackupDialog(QDialog):
         self.btn_read.setEnabled(False)
         self.progress_bar.setValue(0)
 
-        self._worker = FirmwareReadWorker(dst_path, read_type)
+        self._worker = FirmwareReadWorker(dst_path, read_type, api_client=self.api_client)
         self._worker.progress.connect(self.progress_bar.setValue)
         self._worker.status.connect(self._on_status)
         self._worker.finished.connect(lambda p: self._on_finished(p, filename, read_type,
@@ -918,19 +979,35 @@ class ECUReadBackupDialog(QDialog):
         meta.save()
         self.table_widget.refresh()
 
-        msg = f"Демо-файл сгенерирован и сохранён: {filename} ({read_type}, {info['size_human']})"
-        self.log_event_requested.emit(f"[Бэкап][Демо] {msg}")
-        self.lbl_progress_status.setText(f"✅ {msg} (демо-режим)")
+        is_real = bool(self.api_client and getattr(self.api_client, 'is_connected', False))
+
+        if is_real:
+            msg = f"Прошивка считана и сохранена: {filename} ({read_type}, {info['size_human']})"
+            self.log_event_requested.emit(f"[Бэкап] {msg}")
+            self.lbl_progress_status.setText(f"✅ {msg}")
+        else:
+            msg = f"Демо-файл сгенерирован и сохранён: {filename} ({read_type}, {info['size_human']})"
+            self.log_event_requested.emit(f"[Бэкап][Демо] {msg}")
+            self.lbl_progress_status.setText(f"✅ {msg} (демо-режим)")
+
         self.lbl_progress_status.setStyleSheet("color: #66bb6a;")
         self.btn_read.setEnabled(True)
         self.backup_created.emit(filename)
 
-        QMessageBox.information(
-            self, "Демо-бэкап создан",
-            f"⚠️ Это демо-режим: файл заполнен случайными данными, а НЕ реальной прошивкой ЭБУ.\n\n"
-            f"Файл: {filename}\nТип: {read_type}\nРазмер: {info['size_human']}\n\n"
-            f"Реальное считывание прошивки с ЭБУ в этой версии программы не реализовано."
-        )
+        if is_real:
+            QMessageBox.information(
+                self, "Бэкап создан",
+                f"✅ Прошивка считана с ЭБУ и сохранена:\n\n"
+                f"Файл: {filename}\nТип: {read_type}\nРазмер: {info['size_human']}\n\n"
+                f"Калибровка загружена в редактор — можно настраивать параметры."
+            )
+        else:
+            QMessageBox.information(
+                self, "Демо-бэкап создан",
+                f"⚠️ Это демо-режим: файл заполнен случайными данными, а НЕ реальной прошивкой ЭБУ.\n\n"
+                f"Файл: {filename}\nТип: {read_type}\nРазмер: {info['size_human']}\n\n"
+                f"Подключите ЭБУ через J2534 или ELM327/CAN перед считыванием, чтобы получить реальные данные."
+            )
 
     def _on_error(self, msg: str):
         self.lbl_progress_status.setText(f"❌ Ошибка: {msg}")

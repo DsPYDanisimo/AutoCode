@@ -15,6 +15,8 @@ import traceback
 import random
 from datetime import datetime
 
+from virtual_ecu import VirtualECU
+
 
 class VehicleState:
     """Симуляция состояния автомобиля с реалистичными параметрами."""
@@ -36,6 +38,11 @@ class VehicleState:
         self.engine_on = True
         self.start_time = time.time()
         self.dtcs_cleared = False
+
+        # Виртуальный ЭБУ для реального цикла UDS (сессии/SecurityAccess/память/
+        # прошивка) — см. virtual_ecu.py. Общий на все подключения, как и
+        # остальное состояние симулируемого автомобиля.
+        self.virtual_ecu = VirtualECU(ecu_name="SIM-PCM")
 
         # Начальное состояние — холодный двигатель
         self._coolant = 22.0
@@ -421,9 +428,9 @@ class ELM327Simulator:
         if cmd.startswith('09') and len(cmd) >= 4:
             return self._m09(cmd[2:4])
 
-        # KWP2000: Start Diagnostic Session (0x10)
+        # UDS: DiagnosticSessionControl (0x10) — реальный цикл через VirtualECU
         if cmd.startswith('10'):
-            return "50 01 00 19 01 F4"
+            return self._uds_service(0x10, cmd[2:])
 
         # UDS: ECU Reset (0x11)
         if cmd in ('1101', '1103'):
@@ -450,20 +457,43 @@ class ELM327Simulator:
         if cmd.startswith('22') and len(cmd) >= 6:
             return self._uds_read(cmd[2:6])
 
-        # UDS: Security Access (0x27)
+        # UDS: Security Access (0x27) — тестовый seed/key через VirtualECU
         if cmd.startswith('27'):
-            return "67 01 12 34"
+            return self._uds_service(0x27, cmd[2:])
 
         # UDS: Write by identifier (0x2E)
         if cmd.startswith('2E') and len(cmd) >= 6:
             return "6E " + cmd[2:4] + " " + cmd[4:6]
 
+        # UDS: ReadMemoryByAddress (0x23)
+        if cmd.startswith('23'):
+            return self._uds_service(0x23, cmd[2:])
+
+        # UDS: RequestDownload (0x34)
+        if cmd.startswith('34'):
+            return self._uds_service(0x34, cmd[2:])
+
+        # UDS: TransferData (0x36)
+        if cmd.startswith('36'):
+            return self._uds_service(0x36, cmd[2:])
+
+        # UDS: RequestTransferExit (0x37)
+        if cmd.startswith('37'):
+            return self._uds_service(0x37, cmd[2:])
+
         # UDS: Tester Present (0x3E)
         if cmd.startswith('3E'):
-            return "7E 00"
+            return self._uds_service(0x3E, cmd[2:])
 
         print(f"  [?] OBD {cmd}")
         return "?"
+
+    def _uds_service(self, service, data_hex):
+        """Прогоняет сервис через VirtualECU и форматирует ответ как hex-строку
+        через пробел (стиль остальных ответов этого симулятора)."""
+        data = bytes.fromhex(data_hex) if data_hex else b""
+        response = self.vehicle.virtual_ecu.handle_uds_service(service, data)
+        return " ".join(f"{b:02X}" for b in response)
 
     # ------------------------------------------------------------------ #
     #  Mode 01 — PIDs                                                      #

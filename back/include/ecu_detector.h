@@ -1,16 +1,16 @@
 #ifndef ECU_DETECTOR_H
 #define ECU_DETECTOR_H
 
-// ВАЖНО: Эти определения должны быть ДО любых включений Windows.h
+// пїЅпїЅпїЅпїЅпїЅ: пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ Windows.h
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN  // Уменьшает размер Windows.h и исключает конфликты
+#define WIN32_LEAN_AND_MEAN  // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ Windows.h пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 #endif
 #ifndef NOMINMAX
-#define NOMINMAX  // Отключает макросы min/max
+#define NOMINMAX  // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ min/max
 #endif
 #include <windows.h>
-#include <winsock2.h>  // ДОЛЖЕН быть перед windows.h
+#include <winsock2.h>  // пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ windows.h
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
@@ -31,7 +31,7 @@
 #include <chrono>
 #include <mutex>
 
-// Определяем INVALID_SOCKET и socket_t для кроссплатформенности
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ INVALID_SOCKET пїЅ socket_t пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 #ifdef _WIN32
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET (SOCKET)(~0)
@@ -42,7 +42,7 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
-// Структура порта с информацией о типе
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅ
 struct PortInfo {
     std::string name;
     std::string type;
@@ -56,7 +56,7 @@ struct PortInfo {
     PortInfo() : is_available(false), baud_rate(115200), port(0) {}
 };
 
-// Структура CAN сообщения
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ CAN пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 struct CANMessage {
     uint32_t id;
     bool is_extended;
@@ -69,7 +69,7 @@ struct CANMessage {
     }
 };
 
-// Структура подключения к ЭБУ
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅ
 struct ECUConnection {
     bool is_connected;
     std::string protocol;
@@ -86,7 +86,7 @@ struct ECUConnection {
     ECUConnection() : is_connected(false), signal_quality(0) {}
 };
 
-// Структура кода ошибки
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 struct DTCCode {
     std::string code;
     std::string description;
@@ -99,7 +99,7 @@ struct DTCCode {
     DTCCode() : severity(0) {}
 };
 
-// Структура для UDS параметров
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ UDS пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 struct UDSParameter {
     uint16_t did;
     std::string name;
@@ -110,7 +110,7 @@ struct UDSParameter {
     uint8_t access_type;
 };
 
-// Сервисы UDS
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ UDS
 struct UDSServices {
     static constexpr uint8_t DIAGNOSTIC_SESSION_CONTROL = 0x10;
     static constexpr uint8_t ECU_RESET = 0x11;
@@ -138,16 +138,16 @@ private:
     std::unique_ptr<OBDConnector> obd_connector_;
     std::mutex connection_mutex_;
 
-    socket_t tcp_socket_;  // Используем унифицированный тип socket_t
+    socket_t tcp_socket_;  // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ socket_t
 
-    // Кэшированные данные для уменьшения нагрузки
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     std::string cached_vin_;
     std::chrono::steady_clock::time_point last_vin_read_;
     std::map<std::string, double> cached_live_data_;
     std::chrono::steady_clock::time_point last_live_read_;
     std::vector<DTCCode> cached_dtc_codes_;
     std::chrono::steady_clock::time_point last_dtc_read_;
-    static constexpr int CACHE_DURATION_MS = 1000; // Кэшируем на 1 секунду
+    static constexpr int CACHE_DURATION_MS = 1000; // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ 1 пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 
     bool try_obd2_connection(const std::string& port);
     bool try_can_connection(const std::string& port);
@@ -212,6 +212,17 @@ public:
     bool uds_write_memory(uint32_t address, const std::vector<uint8_t>& data);
     bool uds_discover_nodes();
 
+    // РђРґСЂРµСЃР°С†РёСЏ РєРѕРЅРєСЂРµС‚РЅРѕРіРѕ Р­Р‘РЈ РґР»СЏ РїР°РјСЏС‚Рё/security access (РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+    // С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅС‹Р№ Р·Р°РїСЂРѕСЃ 0x7DF/0x7E8 РІ OBDConnector вЂ” РґР»СЏ РїР°РјСЏС‚Рё/РїСЂРѕС€РёРІРєРё
+    // РѕР±С‹С‡РЅРѕ РЅСѓР¶РµРЅ С„РёР·РёС‡РµСЃРєРёР№ Р°РґСЂРµСЃ, РЅР°РїСЂРёРјРµСЂ 0x7E0/0x7E8 РґР»СЏ PCM).
+    void uds_set_target(uint32_t tx_id, uint32_t rx_id);
+
+    // Security Access вЂ” РЅРёР·РєРѕСѓСЂРѕРІРЅРµРІС‹Рµ РїСЂРёРјРёС‚РёРІС‹ РґР»СЏ РѕСЂРєРµСЃС‚СЂР°С†РёРё РЅР° РІС‹Р·С‹РІР°СЋС‰РµР№
+    // СЃС‚РѕСЂРѕРЅРµ (РїСЂРѕРІР°Р№РґРµСЂ РєР»СЋС‡Р° РќР• РІС…РѕРґРёС‚ РІ СЌС‚РѕС‚ РїСЂРѕРµРєС‚, СЃРј. NoKeyProvider).
+    bool uds_enter_session(uint8_t session_type);
+    std::vector<uint8_t> uds_request_seed(uint8_t access_level, bool& already_unlocked);
+    bool uds_send_key(uint8_t access_level, const std::vector<uint8_t>& key);
+
     std::vector<std::string> get_supported_protocols() const;
     std::string get_protocol_description(const std::string& protocol) const;
 
@@ -220,7 +231,7 @@ public:
     std::string get_current_protocol() const { return current_protocol_; }
     std::string get_current_port() const { return current_port_; }
 
-    // Методы для очистки кэша
+    // пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ
     void clear_cache() {
         cached_vin_.clear();
         cached_live_data_.clear();

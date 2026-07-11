@@ -1,7 +1,7 @@
 #ifndef OBD_CONNECTOR_H
 #define OBD_CONNECTOR_H
 
-// ВАЖНО: Эти определения должны быть ДО любых включений
+// пїЅпїЅпїЅпїЅпїЅ: пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -30,10 +30,33 @@
 #include <chrono>
 #include <thread>
 #include <mutex>
+#include <stdexcept>
 #include "serial_port.h"
 #include "ecu_detector.h"
 
-// Определяем INVALID_SOCKET для кроссплатформенности
+// РџРѕСЃС‚Р°РІС‰РёРє РєР»СЋС‡Р° Security Access (0x27, seed -> key). РђР»РіРѕСЂРёС‚Рј СЂР°Р·Р±Р»РѕРєРёСЂРѕРІРєРё
+// СЃРїРµС†РёС„РёС‡РµРЅ РґР»СЏ РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЏ/Р­Р‘РЈ Рё СЏРІР»СЏРµС‚СЃСЏ Р·Р°РєСЂС‹С‚РѕР№ РёРЅС„РѕСЂРјР°С†РёРµР№ вЂ” СЂРµР°Р»РёР·Р°С†РёСЏ
+// РґРѕР»Р¶РЅР° РїРѕРґРєР»СЋС‡Р°С‚СЊСЃСЏ РѕС‚РґРµР»СЊРЅРѕ (СЃРј. NoKeyProvider РЅРёР¶Рµ).
+class ISecurityKeyProvider {
+public:
+    virtual ~ISecurityKeyProvider() = default;
+    virtual std::vector<uint8_t> compute_key(uint8_t access_type, const std::vector<uint8_t>& seed) = 0;
+};
+
+// РџСЂРѕРІР°Р№РґРµСЂ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ: СЏРІРЅРѕ СЃРѕРѕР±С‰Р°РµС‚ РѕР± РѕС‚СЃСѓС‚СЃС‚РІРёРё Р°Р»РіРѕСЂРёС‚РјР°, Р° РЅРµ РїРѕРґСЃС‚Р°РІР»СЏРµС‚
+// СЃР»СѓС‡Р°Р№РЅС‹Р№/СѓРіР°РґР°РЅРЅС‹Р№ РєР»СЋС‡.
+class NoKeyProvider : public ISecurityKeyProvider {
+public:
+    std::vector<uint8_t> compute_key(uint8_t access_type, const std::vector<uint8_t>& seed) override {
+        (void)access_type;
+        (void)seed;
+        throw std::runtime_error(
+            "Security Access: РЅРµ РЅР°СЃС‚СЂРѕРµРЅ РїСЂРѕРІР°Р№РґРµСЂ РєР»СЋС‡Р° (ISecurityKeyProvider). "
+            "РђР»РіРѕСЂРёС‚Рј seed->key СЃРїРµС†РёС„РёС‡РµРЅ РґР»СЏ РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЏ Р­Р‘РЈ Рё РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РїРѕРґРєР»СЋС‡С‘РЅ РѕС‚РґРµР»СЊРЅРѕ.");
+    }
+};
+
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ INVALID_SOCKET пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 #ifdef _WIN32
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET (SOCKET)(~0)
@@ -44,7 +67,7 @@ typedef SOCKET socket_t;
 typedef int socket_t;
 #endif
 
-// Структура для OBD параметров
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ OBD пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 struct OBDParameter {
     std::string pid;
     std::string name;
@@ -60,7 +83,7 @@ struct OBDParameter {
     }
 };
 
-// Структура для KWP2000 параметров
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ KWP2000 пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 struct KWP2000Parameter {
     uint16_t id;
     std::string name;
@@ -72,7 +95,7 @@ struct KWP2000Parameter {
     KWP2000Parameter() : id(0), min_value(0), max_value(0) {}
 };
 
-// Структура для KWP2000 пакетов
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ KWP2000 пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 struct KWP2000Packet {
     uint8_t header;
     uint8_t target_addr;
@@ -104,7 +127,7 @@ struct KWP2000Packet {
     KWP2000Packet() : header(0), target_addr(0), source_addr(0), service_id(0), checksum(0) {}
 };
 
-// Структура для UDS пакетов
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ UDS пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 struct UDSPacket {
     uint8_t service_id;
     std::vector<uint8_t> data;
@@ -117,36 +140,36 @@ struct UDSPacket {
     UDSPacket() : service_id(0) {}
 };
 
-// Основной класс OBD коннектора
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ OBD пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 class OBDConnector {
 public:
     OBDConnector();
     ~OBDConnector();
 
-    // Базовые методы подключения
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     bool connect(const std::string& port, unsigned int baud_rate = 115200);
     bool connect_tcp(const std::string& host, int port);
     void disconnect();
     bool send_keep_alive();
     bool is_connected() const;
 
-    // Методы для TCP сокета
+    // пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ TCP пїЅпїЅпїЅпїЅпїЅпїЅ
     void set_tcp_socket(socket_t sock);
     socket_t get_tcp_socket() const;
     bool is_tcp_mode() const;
 
-    // ELM327 команды
+    // ELM327 пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     bool initialize_adapter();
     bool set_protocol(int protocol_id);
     std::string send_at_command(const std::string& command);
     std::string send_obd_command(const std::string& pid);
     std::string send_command(const std::string& command, int timeout_ms = 2000);
 
-    // TCP специфичные команды
+    // TCP пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     std::string send_tcp_command(const std::string& cmd, int timeout_ms = 2000);
     bool send_tcp_raw(const std::string& data);
 
-    // OBD-II методы
+    // OBD-II пїЅпїЅпїЅпїЅпїЅпїЅ
     double read_parameter(const std::string& pid);
     std::map<std::string, double> read_multiple_parameters(const std::vector<std::string>& pids);
     std::vector<DTCCode> read_dtc_codes();
@@ -154,7 +177,7 @@ public:
     std::string read_vin();
     std::vector<std::string> get_supported_pids();
 
-    // KWP2000 методы
+    // KWP2000 пїЅпїЅпїЅпїЅпїЅпїЅ
     bool initialize_kwp2000();
     std::vector<uint8_t> send_kwp2000_command(const std::vector<uint8_t>& command, int timeout_ms = 2000);
     std::vector<DTCCode> read_kwp2000_dtc();
@@ -164,7 +187,7 @@ public:
     bool kwp2000_start_session(uint8_t session_type);
     bool kwp2000_security_access(uint16_t key);
 
-    // CAN методы (через ELM327)
+    // CAN пїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅ ELM327)
     bool initialize_can();
     bool set_can_baud_rate(uint32_t baud_rate);
     bool send_can_message(uint32_t id, const std::vector<uint8_t>& data, bool is_extended = false);
@@ -174,7 +197,7 @@ public:
     void stop_can_monitoring();
     bool test_can_bus();
 
-    // UDS методы (через CAN)
+    // UDS пїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅ CAN)
     bool initialize_uds();
     UDSPacket send_uds_request(uint8_t service_id, const std::vector<uint8_t>& data = {});
     std::vector<uint8_t> uds_read_data_by_identifier(uint16_t did);
@@ -187,15 +210,31 @@ public:
     bool tester_present();
     std::vector<uint8_t> uds_routine_control(uint8_t routine_id, const std::vector<uint8_t>& params = {});
 
-    // Тест соединения
+    // РђРґСЂРµСЃР°С†РёСЏ UDS-СЃРµСЃСЃРёРё: РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅС‹Р№ Р·Р°РїСЂРѕСЃ 0x7DF/0x7E8 (РєР°Рє СЂР°РЅСЊС€Рµ),
+    // РЅРѕ С‡С‚РµРЅРёРµ/Р·Р°РїРёСЃСЊ РїР°РјСЏС‚Рё С‚СЂРµР±СѓРµС‚ С„РёР·РёС‡РµСЃРєРѕРіРѕ РѕР±СЂР°С‰РµРЅРёСЏ Рє РєРѕРЅРєСЂРµС‚РЅРѕРјСѓ Р­Р‘РЈ.
+    void set_uds_target(uint32_t tx_id, uint32_t rx_id);
+    void set_security_key_provider(std::shared_ptr<ISecurityKeyProvider> provider);
+
+    // РџРѕР»РЅС‹Р№ С†РёРєР» SecurityAccess: Р·Р°РїСЂРѕСЃ seed -> РІС‹С‡РёСЃР»РµРЅРёРµ РєР»СЋС‡Р° С‡РµСЂРµР· РїСЂРѕРІР°Р№РґРµСЂ -> РѕС‚РїСЂР°РІРєР° РєР»СЋС‡Р°.
+    // Р‘СЂРѕСЃР°РµС‚ std::runtime_error, РµСЃР»Рё РїСЂРѕРІР°Р№РґРµСЂ РЅРµ РЅР°СЃС‚СЂРѕРµРЅ (СЃРј. NoKeyProvider).
+    bool uds_unlock_security(uint8_t seed_level);
+
+    // Р РµР°Р»СЊРЅР°СЏ СЂР°Р±РѕС‚Р° СЃ РїР°РјСЏС‚СЊСЋ Р­Р‘РЈ (0x23/0x34/0x36/0x37) вЂ” РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ
+    // С‡С‚РµРЅРёСЏ/Р·Р°РїРёСЃРё РїСЂРѕС€РёРІРєРё РїРѕРІРµСЂС… CAN/UDS.
+    std::vector<uint8_t> uds_read_memory_by_address(uint32_t address, uint16_t size, uint8_t addr_len_fmt = 0x24);
+    bool uds_request_download(uint32_t address, uint32_t size, uint16_t& out_block_size, uint8_t addr_len_fmt = 0x24);
+    bool uds_transfer_data(uint8_t block_seq, const std::vector<uint8_t>& chunk);
+    bool uds_request_transfer_exit();
+
+    // пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     bool test_connection();
 
-    // Мониторинг
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     void start_realtime_monitoring(const std::vector<std::string>& pids);
     void stop_realtime_monitoring();
     std::map<std::string, double> get_current_values();
 
-    // Вспомогательные методы
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
     static std::string bytes_to_hex(const std::vector<uint8_t>& bytes);
     static std::vector<uint8_t> hex_to_bytes(const std::string& hex);
 
@@ -214,7 +253,16 @@ private:
     bool monitoring_active_;
     std::function<void(const CANMessage&)> can_callback_;
 
-    // Парсинг ответов
+    // CAN/UDS: Р°РґСЂРµСЃР°С†РёСЏ С‚РµРєСѓС‰РµР№ СЃРµСЃСЃРёРё Рё РєСЌС€ РїРѕСЃР»РµРґРЅРµРіРѕ "СЃС‹СЂРѕРіРѕ" РѕС‚РІРµС‚Р°
+    // (ELM327 РІ СЂРµР¶РёРјРµ ATH0 РІРѕР·РІСЂР°С‰Р°РµС‚ РіРѕР»С‹Р№ hex Р±РµР· CAN ID вЂ” CANMessage-РїР°СЂСЃРёРЅРі
+    // РґР»СЏ С‚РѕС‡РµС‡РЅС‹С… UDS-Р·Р°РїСЂРѕСЃРѕРІ РЅРµ РїРѕРґС…РѕРґРёС‚, РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ С‚РѕР»СЊРєРѕ discover_can_nodes,
+    // РєРѕС‚РѕСЂС‹Р№ СЃР°Рј РІРєР»СЋС‡Р°РµС‚ ATH1 РЅР° РІСЂРµРјСЏ СЃРєР°РЅРёСЂРѕРІР°РЅРёСЏ).
+    uint32_t uds_tx_id_ = 0x7DF;
+    uint32_t uds_rx_id_ = 0x7E8;
+    std::string last_can_response_;
+    std::shared_ptr<ISecurityKeyProvider> security_provider_ = std::make_shared<NoKeyProvider>();
+
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     double parse_response(const std::string& response, const std::string& pid);
     std::vector<DTCCode> parse_dtc_response(const std::string& response);
     KWP2000Packet parse_kwp2000_response(const std::vector<uint8_t>& response);
@@ -222,17 +270,17 @@ private:
     std::vector<DTCCode> parse_uds_dtc(const std::vector<uint8_t>& data);
     std::vector<CANMessage> parse_can_messages(const std::string& response);
 
-    // Инициализация
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     void initialize_parameters();
     void initialize_kwp2000_parameters();
     void initialize_uds_parameters();
 
-    // Конвертация
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     static unsigned int hex_to_int(const std::string& hex);
     static std::string int_to_hex(unsigned int value);
     uint8_t calculate_kwp2000_checksum(const std::vector<uint8_t>& data);
 
-    // Очистка сокета
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
     void cleanup_socket();
 };
 

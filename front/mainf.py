@@ -1481,6 +1481,7 @@ class ECU_DiagnosticApp(QMainWindow):
     _bt_scan_done   = pyqtSignal(list)          # (bt_devices)
     _j2534_scan_done = pyqtSignal(list)         # (j2534_devices)
     _read_errors_done = pyqtSignal(list)        # (errors)
+    _restore_done = pyqtSignal(bool, str)       # (success, message)
 
     def __init__(self):
         super().__init__()
@@ -1993,6 +1994,7 @@ class ECU_DiagnosticApp(QMainWindow):
         self._bt_scan_done.connect(self._on_bt_scan_done)
         self._j2534_scan_done.connect(self._on_j2534_scan_done)
         self._read_errors_done.connect(self._on_read_errors_done)
+        self._restore_done.connect(self._on_restore_done)
         
     def refresh_ports(self):
         self.port_combo.clear()
@@ -2874,6 +2876,11 @@ class ECU_DiagnosticApp(QMainWindow):
         return dlg.exec_() == QDialog.Accepted
 
     def write_calibration(self):
+        # Реальная запись отдельных параметров (угол зажигания, топливная карта и т.д.)
+        # требует карты памяти конкретного ЭБУ (адрес/формат каждого параметра) — её
+        # в проекте пока нет ни в каком виде (см. заметки по архитектуре). Писать
+        # наугад в память реального ЭБУ нельзя — поэтому это всегда демо-режим,
+        # в отличие от restore_from_backup(), где адрес и байты уже известны из файла.
         if not self.active_calibration or not self.active_calibration.is_dirty:
             return
         if not self._confirm_irreversible(self._tr["write_ecu_title"], self._tr["write_ecu_body"]):
@@ -2881,7 +2888,7 @@ class ECU_DiagnosticApp(QMainWindow):
         logger.warning("Начало записи калибровки в ЭБУ")
         self.log_event("✍️ Запись калибровки в ЭБУ...")
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # неопределённый прогресс — реальная запись не реализована
+        self.progress_bar.setRange(0, 0)
         QTimer.singleShot(700, self._finish_write_calibration)
 
     def _finish_write_calibration(self):
@@ -2895,18 +2902,68 @@ class ECU_DiagnosticApp(QMainWindow):
     def restore_from_backup(self):
         if not self._confirm_irreversible(self._tr["restore_backup_title"], self._tr["restore_backup_body"]):
             return
-        logger.info("Восстановление ЭБУ из бэкапа")
+
+        # Реальное восстановление возможно только через J2534 (см. решение по
+        # проекту: J2534 — запись, ELM327/CAN — пока только чтение) и только когда
+        # есть реальный файл бэкапа (сырые байты, считанные с адреса 0x0 — см.
+        # FirmwareReadWorker.START_ADDRESS в ecu_backup_tab.py).
+        j2534 = getattr(self.api_client, "_j2534", None)
+        src_filename = self.active_calibration.source_filename if self.active_calibration else ""
+        backup_path = os.path.join(BACKUP_DIR, src_filename) if src_filename else ""
+
+        if j2534 is not None and backup_path and os.path.isfile(backup_path):
+            self._restore_from_backup_real(backup_path)
+        else:
+            self._restore_from_backup_demo()
+
+    def _restore_from_backup_real(self, backup_path: str):
+        logger.warning(f"Восстановление ЭБУ из реального бэкапа: {backup_path}")
+        self.log_event("🔄 Восстановление ЭБУ из бэкапа (реальная запись через J2534)...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)
+
+        def _restore_thread():
+            try:
+                with open(backup_path, "rb") as f:
+                    data = f.read()
+                success = self.api_client.write_memory(0x00000000, data)
+                msg = (self._tr["restore_backup_done"] if success else
+                       "Восстановление отклонено ЭБУ (см. лог: security access/сессия/TransferData).")
+                self._restore_done.emit(success, msg)
+            except Exception as e:
+                self._restore_done.emit(False, str(e))
+
+        threading.Thread(target=_restore_thread, daemon=True).start()
+
+    def _restore_from_backup_demo(self):
+        logger.info("Восстановление ЭБУ из бэкапа (демо-режим)")
         self.log_event("🔄 Восстановление ЭБУ из бэкапа...")
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # неопределённый прогресс — реальное восстановление не реализовано
-        QTimer.singleShot(700, self._finish_restore_backup)
+        self.progress_bar.setRange(0, 0)
+        QTimer.singleShot(700, self._finish_restore_backup_demo)
 
-    def _finish_restore_backup(self):
+    def _finish_restore_backup_demo(self):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
         logger.info("Калибровка заменена данными бэкапа (демо-режим, без записи в ЭБУ)")
         QMessageBox.information(self, self._tr["restore_backup_title"], self._tr["restore_backup_done"])
         self.log_event("✅ Восстановлено из резервной копии (демо-режим)")
+        QTimer.singleShot(400, lambda: self.progress_bar.setVisible(False))
+
+    def _on_restore_done(self, success: bool, message: str):
+        """Вызывается в главном потоке по завершении реального восстановления (J2534)."""
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100 if success else 0)
+
+        if success:
+            logger.info("ЭБУ реально восстановлен из бэкапа")
+            QMessageBox.information(self, self._tr["restore_backup_title"], message)
+            self.log_event("✅ ЭБУ восстановлен из резервной копии (реальная запись)")
+        else:
+            logger.error(f"Восстановление ЭБУ не удалось: {message}")
+            QMessageBox.critical(self, self._tr["restore_backup_title"], message)
+            self.log_event(f"❌ Восстановление не удалось: {message}")
+
         QTimer.singleShot(400, lambda: self.progress_bar.setVisible(False))
     
     def open_settings(self):

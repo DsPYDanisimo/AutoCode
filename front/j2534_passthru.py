@@ -693,6 +693,164 @@ class J2534PassThru:
         logger.debug(f"UDS DSC {session_id:#x}: отказ, NRC={nrc:#x}, raw={list(data[:6])}")
         return False
 
+    # ── Публичная обёртка для входа в сессию (нужна для J2534PassThruBridge —
+    # там нет generic passthrough, только явно объявленные методы) ────────────
+
+    def enter_session(self, session_id: int, ecu_addr: int = 0x7E0) -> bool:
+        return self._uds_enter_session(session_id, ecu_addr=ecu_addr)
+
+    # ── Security Access и работа с памятью ЭБУ (0x23/0x27/0x34/0x36/0x37) ────
+    # Алгоритм seed→key специфичен для производителя ЭБУ и НЕ реализован здесь —
+    # см. security_access.py. Эти методы — низкоуровневые примитивы, bytes
+    # передаются как hex-строки (нужно для JSON-моста J2534PassThruBridge).
+    # Провайдер ключа вызывается в коде, который использует этот транспорт
+    # (см. ecu_backup_tab.py / mainf.py), не здесь.
+
+    def request_seed(self, access_level: int, ecu_addr: int = 0x7E0) -> Optional[str]:
+        """
+        UDS SecurityAccess (0x27), запрос seed. access_level — нечётный
+        (0x01, 0x03, 0x05, 0x11...). Возвращает seed hex-строкой ("" — ЭБУ уже
+        разблокирован и вернул пустой seed), либо None при ошибке/NRC.
+        """
+        data = self._uds_request(ecu_addr, 0x27, access_level, timeout_ms=3000)
+        if data is None or not data:
+            return None
+        if data[0] == 0x67:
+            # data[1] — эхо access_level (ISO 14229: [0x67][securityAccessType][seed...]),
+            # сам seed начинается с data[2].
+            return data[2:].hex()
+        nrc = data[2] if len(data) > 2 else 0xFF
+        logger.warning(f"SecurityAccess seed (уровень {access_level:#x}): NRC={nrc:#x}")
+        return None
+
+    def send_key(self, access_level: int, key_hex: str, ecu_addr: int = 0x7E0) -> bool:
+        """UDS SecurityAccess (0x27), отправка ключа. access_level — чётный
+        (следующий за уровнем запроса seed, например 0x02 после 0x01)."""
+        try:
+            key = bytes.fromhex(key_hex)
+        except ValueError:
+            logger.error("send_key: key_hex не является валидной hex-строкой")
+            return False
+
+        data = self._uds_request(ecu_addr, 0x27, access_level, *key, timeout_ms=3000)
+        if data is None or not data:
+            return False
+        if data[0] == 0x67:
+            return True
+        nrc = data[2] if len(data) > 2 else 0xFF
+        logger.warning(f"SecurityAccess key (уровень {access_level:#x}): отклонён, NRC={nrc:#x}")
+        return False
+
+    def read_memory(self, address: int, size: int, ecu_addr: int = 0x7E0,
+                     addr_len_fmt: int = 0x24, chunk_size: int = 0xF0) -> Optional[str]:
+        """
+        UDS ReadMemoryByAddress (0x23): читает size байт с address блоками по
+        chunk_size. Возвращает весь результат одной hex-строкой; при обрыве
+        чтения посередине возвращает None (чтобы не отдать в UI обрезанный
+        бэкап без явного признака ошибки).
+        """
+        result = bytearray()
+        offset = 0
+        addr_bytes = addr_len_fmt & 0x0F
+        size_bytes = (addr_len_fmt >> 4) & 0x0F
+
+        while offset < size:
+            block = min(chunk_size, size - offset)
+            cur_addr = address + offset
+            req = [addr_len_fmt]
+            req += [(cur_addr >> (8 * i)) & 0xFF for i in range(addr_bytes - 1, -1, -1)]
+            req += [(block >> (8 * i)) & 0xFF for i in range(size_bytes - 1, -1, -1)]
+
+            data = self._uds_request(ecu_addr, 0x23, *req, timeout_ms=5000)
+            if not data or data[0] != 0x63:
+                nrc = data[2] if data and len(data) > 2 else None
+                logger.warning(f"ReadMemoryByAddress: обрыв на смещении {offset} "
+                                f"(NRC={nrc if nrc is not None else '?'})")
+                return None
+
+            result += data[1:]
+            offset += block
+
+        return bytes(result).hex()
+
+    def request_download(self, address: int, size: int, ecu_addr: int = 0x7E0,
+                          addr_len_fmt: int = 0x24) -> Optional[int]:
+        """UDS RequestDownload (0x34). Возвращает согласованный размер блока
+        TransferData (за вычетом 2-байтового заголовка), либо None при отказе."""
+        addr_bytes = addr_len_fmt & 0x0F
+        size_bytes = (addr_len_fmt >> 4) & 0x0F
+
+        req = [0x00, addr_len_fmt]
+        req += [(address >> (8 * i)) & 0xFF for i in range(addr_bytes - 1, -1, -1)]
+        req += [(size >> (8 * i)) & 0xFF for i in range(size_bytes - 1, -1, -1)]
+
+        data = self._uds_request(ecu_addr, 0x34, *req, timeout_ms=5000)
+        if not data or data[0] != 0x74:
+            return None
+
+        len_fmt = data[1] if len(data) > 1 else 0
+        max_len_bytes = (len_fmt >> 4) & 0x0F
+        max_block = 0
+        for i in range(max_len_bytes):
+            if 2 + i < len(data):
+                max_block = (max_block << 8) | data[2 + i]
+
+        block_size = max_block - 2  # -2: service id + blockSequenceCounter в TransferData
+        return block_size if block_size > 0 else None
+
+    def transfer_data(self, block_seq: int, chunk_hex: str, ecu_addr: int = 0x7E0) -> bool:
+        """UDS TransferData (0x36)."""
+        try:
+            chunk = bytes.fromhex(chunk_hex)
+        except ValueError:
+            return False
+        data = self._uds_request(ecu_addr, 0x36, block_seq, *chunk, timeout_ms=5000)
+        return bool(data) and data[0] == 0x76
+
+    def request_transfer_exit(self, ecu_addr: int = 0x7E0) -> bool:
+        """UDS RequestTransferExit (0x37)."""
+        data = self._uds_request(ecu_addr, 0x37, timeout_ms=3000)
+        return bool(data) and data[0] == 0x77
+
+    def write_memory(self, address: int, data_hex: str, ecu_addr: int = 0x7E0,
+                      addr_len_fmt: int = 0x24) -> bool:
+        """
+        Полный цикл записи: RequestDownload → TransferData(×N) → RequestTransferExit.
+        Вызывающий код должен ЗАРАНЕЕ выполнить enter_session(programming) и
+        разблокировку SecurityAccess (request_seed/send_key) — эта функция сама
+        сессию и ключ не запрашивает.
+        """
+        try:
+            payload = bytes.fromhex(data_hex)
+        except ValueError:
+            logger.error("write_memory: data_hex не является валидной hex-строкой")
+            return False
+        if not payload:
+            return False
+
+        block_size = self.request_download(address, len(payload), ecu_addr=ecu_addr,
+                                            addr_len_fmt=addr_len_fmt)
+        if not block_size:
+            logger.warning("write_memory: RequestDownload отклонён ЭБУ")
+            return False
+
+        block_seq = 1
+        offset = 0
+        while offset < len(payload):
+            chunk = payload[offset: offset + block_size]
+            if not self.transfer_data(block_seq, chunk.hex(), ecu_addr=ecu_addr):
+                logger.warning(f"write_memory: TransferData отклонён на блоке {block_seq}")
+                self.request_transfer_exit(ecu_addr=ecu_addr)
+                return False
+            offset += len(chunk)
+            block_seq = (block_seq % 0xFF) + 1
+
+        if not self.request_transfer_exit(ecu_addr=ecu_addr):
+            logger.warning("write_memory: RequestTransferExit отклонён ЭБУ")
+            return False
+
+        return True
+
     # ── Стандартные адреса ECU (OBD-II / UDS) ────────────────────────────────
 
     # Таблица ECU: (адрес_запроса, адрес_ответа, название).
@@ -1272,6 +1430,70 @@ class J2534PassThruBridge:
 
     def get_last_error(self) -> str:
         return ""
+
+    # ── Security Access / память ЭБУ — зеркалит J2534PassThru (см. там же) ───
+
+    def enter_session(self, session_id: int, ecu_addr: int = 0x7E0) -> bool:
+        try:
+            return bool(self._call("enter_session", session_id, ecu_addr=ecu_addr))
+        except Exception as e:
+            logger.error(f"J2534 bridge enter_session: {e}")
+            return False
+
+    def request_seed(self, access_level: int, ecu_addr: int = 0x7E0) -> Optional[str]:
+        try:
+            return self._call("request_seed", access_level, ecu_addr=ecu_addr)
+        except Exception as e:
+            logger.error(f"J2534 bridge request_seed: {e}")
+            return None
+
+    def send_key(self, access_level: int, key_hex: str, ecu_addr: int = 0x7E0) -> bool:
+        try:
+            return bool(self._call("send_key", access_level, key_hex, ecu_addr=ecu_addr))
+        except Exception as e:
+            logger.error(f"J2534 bridge send_key: {e}")
+            return False
+
+    def read_memory(self, address: int, size: int, ecu_addr: int = 0x7E0,
+                     addr_len_fmt: int = 0x24, chunk_size: int = 0xF0) -> Optional[str]:
+        try:
+            return self._call("read_memory", address, size, ecu_addr=ecu_addr,
+                               addr_len_fmt=addr_len_fmt, chunk_size=chunk_size)
+        except Exception as e:
+            logger.error(f"J2534 bridge read_memory: {e}")
+            return None
+
+    def request_download(self, address: int, size: int, ecu_addr: int = 0x7E0,
+                          addr_len_fmt: int = 0x24) -> Optional[int]:
+        try:
+            return self._call("request_download", address, size, ecu_addr=ecu_addr,
+                               addr_len_fmt=addr_len_fmt)
+        except Exception as e:
+            logger.error(f"J2534 bridge request_download: {e}")
+            return None
+
+    def transfer_data(self, block_seq: int, chunk_hex: str, ecu_addr: int = 0x7E0) -> bool:
+        try:
+            return bool(self._call("transfer_data", block_seq, chunk_hex, ecu_addr=ecu_addr))
+        except Exception as e:
+            logger.error(f"J2534 bridge transfer_data: {e}")
+            return False
+
+    def request_transfer_exit(self, ecu_addr: int = 0x7E0) -> bool:
+        try:
+            return bool(self._call("request_transfer_exit", ecu_addr=ecu_addr))
+        except Exception as e:
+            logger.error(f"J2534 bridge request_transfer_exit: {e}")
+            return False
+
+    def write_memory(self, address: int, data_hex: str, ecu_addr: int = 0x7E0,
+                      addr_len_fmt: int = 0x24) -> bool:
+        try:
+            return bool(self._call("write_memory", address, data_hex, ecu_addr=ecu_addr,
+                                    addr_len_fmt=addr_len_fmt))
+        except Exception as e:
+            logger.error(f"J2534 bridge write_memory: {e}")
+            return False
 
 
 # ─── Фабрика ──────────────────────────────────────────────────────────────────

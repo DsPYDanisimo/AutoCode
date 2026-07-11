@@ -2149,31 +2149,24 @@ bool OBDConnector::send_can_message(uint32_t id, const std::vector<uint8_t>& dat
 
 
 
-    // ������������� ID
+    // ATSH — устанавливает заголовок (ID) для ПЕРЕДАЧИ. Раньше здесь ошибочно
+    // использовался ATCRA (это фильтр ПРИЁМА, а не адрес отправителя).
 
-    std::stringstream id_ss;
+    std::stringstream hdr_ss;
 
-    if (is_extended) {
+    hdr_ss << "SH " << std::hex << std::uppercase
+        << std::setw(is_extended ? 8 : 3) << std::setfill('0') << id;
 
-        id_ss << "ATCEA " << std::hex << std::uppercase << std::setw(8) << std::setfill('0') << id;
-
-    }
-
-    else {
-
-        id_ss << "ATCRA " << std::hex << std::uppercase << std::setw(3) << std::setfill('0') << id;
-
-    }
-
-    send_at_command(id_ss.str());
+    send_at_command(hdr_ss.str());
 
 
 
-    // ���������� ������
+    // Полезная нагрузка отправляется как обычная hex-строка через уже рабочий
+    // send_command() (как в send_kwp2000_command) — ELM327 сам делает ISO-TP
+    // сегментацию и сразу возвращает ответ ЭБУ на эту же команду.
+    // ATCT/CRR, использовавшиеся здесь раньше, не являются реальными AT-командами.
 
     std::stringstream data_ss;
-
-    data_ss << "ATCT " << data.size() << ",";
 
     for (size_t i = 0; i < data.size(); i++) {
 
@@ -2181,15 +2174,15 @@ bool OBDConnector::send_can_message(uint32_t id, const std::vector<uint8_t>& dat
 
             << static_cast<int>(data[i]);
 
-        if (i < data.size() - 1) data_ss << ",";
-
     }
 
 
 
-    std::string response = send_at_command(data_ss.str());
+    last_can_response_ = send_command(data_ss.str());
 
-    return response.find("OK") != std::string::npos;
+    return !last_can_response_.empty()
+        && last_can_response_.find("NO DATA") == std::string::npos
+        && last_can_response_.find("ERROR") == std::string::npos;
 
 }
 
@@ -2203,13 +2196,14 @@ std::vector<CANMessage> OBDConnector::read_can_messages(int timeout_ms) {
 
 
 
-    std::string response = send_at_command("CRR");
+    // Разбирает последний ответ, полученный send_can_message(). Формат "ID+данные"
+    // корректен только при включённых заголовках (ATH1) — так их включает
+    // discover_can_nodes() на время сканирования. Настоящий потоковый мониторинг
+    // шины (ATMA) этой функцией не читается — см. TODO в monitor_can_bus().
 
+    if (!last_can_response_.empty()) {
 
-
-    if (!response.empty()) {
-
-        messages = parse_can_messages(response);
+        messages = parse_can_messages(last_can_response_);
 
     }
 
@@ -2431,11 +2425,13 @@ UDSPacket OBDConnector::send_uds_request(uint8_t service_id, const std::vector<u
 
     UDSPacket result;
 
-    result.service_id = service_id;
+    // 0x7F = негативный ответ ("нет ответа" тоже считаем негативным, а не тихо
+    // подменяем эхом запрошенного service_id — раньше отсутствие ответа выглядело
+    // как успех для has_negative_response()).
+
+    result.service_id = 0x7F;
 
 
-
-    // ��������� UDS ������ ��� CAN
 
     std::vector<uint8_t> request;
 
@@ -2445,33 +2441,30 @@ UDSPacket OBDConnector::send_uds_request(uint8_t service_id, const std::vector<u
 
 
 
-    // ���������� ����� CAN (������ ID 0x7DF ��� ��������, ����� �� 0x7E8)
+    // Физическая адресация текущей UDS-сессии (по умолчанию функциональный
+    // запрос 0x7DF/0x7E8, см. set_uds_target()).
 
-    if (send_can_message(0x7DF, request)) {
+    if (!send_can_message(uds_tx_id_, request)) {
 
-        // ���� �����
+        return result;
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
 
 
 
-        auto messages = read_can_messages(500);
+    // ELM327 в режиме ATH0 (заголовки выключены, initialize_adapter()) возвращает
+    // голый hex-ответ ЭБУ на ту же команду — как и в send_kwp2000_command,
+    // отдельного опроса не требуется.
 
-        for (const auto& msg : messages) {
+    auto reply = hex_to_bytes(last_can_response_);
 
-            if (msg.id == 0x7E8 && !msg.data.empty()) {
+    if (!reply.empty()) {
 
-                result.service_id = msg.data[0];
+        result.service_id = reply[0];
 
-                if (msg.data.size() > 1) {
+        if (reply.size() > 1) {
 
-                    result.data.assign(msg.data.begin() + 1, msg.data.end());
-
-                }
-
-                break;
-
-            }
+            result.data.assign(reply.begin() + 1, reply.end());
 
         }
 
@@ -2480,6 +2473,32 @@ UDSPacket OBDConnector::send_uds_request(uint8_t service_id, const std::vector<u
 
 
     return result;
+
+}
+
+
+
+void OBDConnector::set_uds_target(uint32_t tx_id, uint32_t rx_id) {
+
+    uds_tx_id_ = tx_id;
+
+    uds_rx_id_ = rx_id;
+
+
+
+    std::stringstream ss;
+
+    ss << "CRA " << std::hex << std::uppercase << std::setw(3) << std::setfill('0') << rx_id;
+
+    send_at_command(ss.str());
+
+}
+
+
+
+void OBDConnector::set_security_key_provider(std::shared_ptr<ISecurityKeyProvider> provider) {
+
+    security_provider_ = provider ? provider : std::make_shared<NoKeyProvider>();
 
 }
 
@@ -2720,6 +2739,208 @@ bool OBDConnector::uds_security_access(uint8_t access_type, const std::vector<ui
 
 
     return false;
+
+}
+
+
+
+bool OBDConnector::uds_unlock_security(uint8_t seed_level) {
+
+    // Шаг 1: запросить seed (нечётный access_type).
+
+    auto seed_response = send_uds_request(0x27, { seed_level });
+
+    if (seed_response.has_negative_response()) {
+
+        return false;
+
+    }
+
+
+
+    // Позитивный ответ 0x67: [эхо access_type][seed...] — сам seed начинается
+    // со второго байта (раньше здесь ошибочно эхо-байт считался частью seed'а).
+    std::vector<uint8_t> seed;
+    if (seed_response.data.size() > 1) {
+        seed.assign(seed_response.data.begin() + 1, seed_response.data.end());
+    }
+
+    // ЭБУ в незаблокированном состоянии иногда отвечает пустым/нулевым seed'ом —
+    // это уже разблокировано, ключ не нужен.
+    if (seed.empty() || std::all_of(seed.begin(), seed.end(),
+            [](uint8_t b) { return b == 0; })) {
+
+        return true;
+
+    }
+
+
+
+    // Шаг 2: посчитать key через подключаемый провайдер (бросает исключение,
+    // если провайдер не настроен — см. NoKeyProvider).
+
+    std::vector<uint8_t> key = security_provider_->compute_key(seed_level, seed);
+
+
+
+    // Шаг 3: отправить key (следующий чётный access_type).
+
+    auto key_response = send_uds_request(0x27, [&]() {
+
+        std::vector<uint8_t> req = { static_cast<uint8_t>(seed_level + 1) };
+
+        req.insert(req.end(), key.begin(), key.end());
+
+        return req;
+
+    }());
+
+
+
+    return !key_response.has_negative_response();
+
+}
+
+
+
+std::vector<uint8_t> OBDConnector::uds_read_memory_by_address(uint32_t address, uint16_t size, uint8_t addr_len_fmt) {
+
+    // 0x23 ReadMemoryByAddress: [addressAndLengthFormatIdentifier][memoryAddress][memorySize]
+    // addr_len_fmt: старший полубайт — байты memorySize, младший — байты memoryAddress.
+
+    uint8_t addr_bytes = addr_len_fmt & 0x0F;
+
+    uint8_t size_bytes = (addr_len_fmt >> 4) & 0x0F;
+
+
+
+    std::vector<uint8_t> request;
+
+    request.push_back(addr_len_fmt);
+
+    for (int i = static_cast<int>(addr_bytes) - 1; i >= 0; --i) {
+
+        request.push_back(static_cast<uint8_t>((address >> (8 * i)) & 0xFF));
+
+    }
+
+    for (int i = static_cast<int>(size_bytes) - 1; i >= 0; --i) {
+
+        request.push_back(static_cast<uint8_t>((size >> (8 * i)) & 0xFF));
+
+    }
+
+
+
+    auto response = send_uds_request(0x23, request);
+
+    if (response.has_negative_response()) {
+
+        return {};
+
+    }
+
+    return response.data;
+
+}
+
+
+
+bool OBDConnector::uds_request_download(uint32_t address, uint32_t size, uint16_t& out_block_size, uint8_t addr_len_fmt) {
+
+    // 0x34 RequestDownload: [dataFormatIdentifier][addressAndLengthFormatIdentifier][memoryAddress][memorySize]
+    // Позитивный ответ 0x74: [lengthFormatIdentifier][maxNumberOfBlockLength]
+
+    uint8_t addr_bytes = addr_len_fmt & 0x0F;
+
+    uint8_t size_bytes = (addr_len_fmt >> 4) & 0x0F;
+
+
+
+    std::vector<uint8_t> request;
+
+    request.push_back(0x00); // dataFormatIdentifier: без сжатия/шифрования
+
+    request.push_back(addr_len_fmt);
+
+    for (int i = static_cast<int>(addr_bytes) - 1; i >= 0; --i) {
+
+        request.push_back(static_cast<uint8_t>((address >> (8 * i)) & 0xFF));
+
+    }
+
+    for (int i = static_cast<int>(size_bytes) - 1; i >= 0; --i) {
+
+        request.push_back(static_cast<uint8_t>((size >> (8 * i)) & 0xFF));
+
+    }
+
+
+
+    auto response = send_uds_request(0x34, request);
+
+    if (response.has_negative_response() || response.data.empty()) {
+
+        out_block_size = 0;
+
+        return false;
+
+    }
+
+
+
+    uint8_t len_fmt = response.data[0];
+
+    uint8_t max_len_bytes = (len_fmt >> 4) & 0x0F;
+
+    uint32_t max_block = 0;
+
+    for (size_t i = 0; i < max_len_bytes && (1 + i) < response.data.size(); ++i) {
+
+        max_block = (max_block << 8) | response.data[1 + i];
+
+    }
+
+
+
+    // -2: в каждом блоке TransferData первые 2 байта — service id (0x36) и
+    // blockSequenceCounter, полезной нагрузки в блоке меньше на них.
+
+    out_block_size = (max_block > 2) ? static_cast<uint16_t>(max_block - 2) : 0;
+
+    return out_block_size > 0;
+
+}
+
+
+
+bool OBDConnector::uds_transfer_data(uint8_t block_seq, const std::vector<uint8_t>& chunk) {
+
+    // 0x36 TransferData: [blockSequenceCounter][data...]
+
+    std::vector<uint8_t> request;
+
+    request.push_back(block_seq);
+
+    request.insert(request.end(), chunk.begin(), chunk.end());
+
+
+
+    auto response = send_uds_request(0x36, request);
+
+    return !response.has_negative_response();
+
+}
+
+
+
+bool OBDConnector::uds_request_transfer_exit() {
+
+    // 0x37 RequestTransferExit — без параметров (без контрольной суммы transferRequestParameterRecord).
+
+    auto response = send_uds_request(0x37, {});
+
+    return !response.has_negative_response();
 
 }
 

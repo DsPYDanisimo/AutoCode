@@ -88,6 +88,11 @@ int main() {
     std::cout << "  GET  /api/protocols/supported - поддерживаемые протоколы" << std::endl;
     std::cout << "  GET  /api/can/monitor - мониторинг CAN шины" << std::endl;
     std::cout << "  GET  /api/uds/dids - список поддерживаемых DID" << std::endl;
+    std::cout << "  POST /api/uds/session - вход в диагностическую сессию" << std::endl;
+    std::cout << "  POST /api/uds/security/seed - Security Access, запрос seed" << std::endl;
+    std::cout << "  POST /api/uds/security/key - Security Access, отправка ключа" << std::endl;
+    std::cout << "  POST /api/uds/memory/read - чтение памяти ЭБУ" << std::endl;
+    std::cout << "  POST /api/uds/memory/write - запись памяти ЭБУ" << std::endl;
     std::cout << "  GET  /api/dtc/all - все DTC коды из базы" << std::endl;
     std::cout << "  GET  /api/dtc/search - поиск DTC кодов" << std::endl;
     std::cout << "  GET  /api/dtc/{code} - информация о конкретном DTC" << std::endl;
@@ -493,6 +498,133 @@ void setup_api_server(httplib::Server& server) {
                 {"success", success},
                 {"reset_type", reset_type}
             };
+        }
+        catch (const std::exception& e) {
+            response = { {"success", false}, {"error", e.what()} };
+        }
+
+        res.set_content(response.dump(), "application/json");
+        });
+
+    // UDS - вход в диагностическую сессию (0x10). tx_id/rx_id — физический адрес
+    // ЭБУ (по умолчанию 0x7E0/0x7E8, PCM); нужен для последующих memory/security
+    // запросов на конкретный блок управления, а не на functional broadcast 0x7DF.
+    server.Post("/api/uds/session", [](const httplib::Request& req, httplib::Response& res) {
+        json response;
+
+        try {
+            auto j = json::parse(req.body);
+            uint8_t session_type = j.value("session_type", 0x01);
+            uint32_t tx_id = j.value("tx_id", 0x7E0u);
+            uint32_t rx_id = j.value("rx_id", 0x7E8u);
+
+            std::lock_guard<std::mutex> lock(ecu_mutex);
+            ecu_detector.uds_set_target(tx_id, rx_id);
+            bool success = ecu_detector.uds_enter_session(session_type);
+
+            response = { {"success", success}, {"session_type", session_type} };
+        }
+        catch (const std::exception& e) {
+            response = { {"success", false}, {"error", e.what()} };
+        }
+
+        res.set_content(response.dump(), "application/json");
+        });
+
+    // UDS - Security Access, шаг 1: запрос seed. Вычисление key (провайдер
+    // ключа) остаётся на стороне вызывающего кода — см. front/security_access.py.
+    server.Post("/api/uds/security/seed", [](const httplib::Request& req, httplib::Response& res) {
+        json response;
+
+        try {
+            auto j = json::parse(req.body);
+            uint8_t access_level = j.value("access_level", 0x01);
+
+            std::lock_guard<std::mutex> lock(ecu_mutex);
+            bool already_unlocked = false;
+            auto seed = ecu_detector.uds_request_seed(access_level, already_unlocked);
+
+            response = {
+                {"success", already_unlocked || !seed.empty()},
+                {"already_unlocked", already_unlocked},
+                {"seed", bytes_to_hex(seed)}
+            };
+        }
+        catch (const std::exception& e) {
+            response = { {"success", false}, {"error", e.what()} };
+        }
+
+        res.set_content(response.dump(), "application/json");
+        });
+
+    // UDS - Security Access, шаг 2: отправка вычисленного ключа
+    server.Post("/api/uds/security/key", [](const httplib::Request& req, httplib::Response& res) {
+        json response;
+
+        try {
+            auto j = json::parse(req.body);
+            uint8_t access_level = j.value("access_level", 0x02);
+            std::string key_hex = j.value("key", "");
+            auto key = OBDConnector::hex_to_bytes(key_hex);
+
+            std::lock_guard<std::mutex> lock(ecu_mutex);
+            bool success = ecu_detector.uds_send_key(access_level, key);
+
+            response = { {"success", success} };
+        }
+        catch (const std::exception& e) {
+            response = { {"success", false}, {"error", e.what()} };
+        }
+
+        res.set_content(response.dump(), "application/json");
+        });
+
+    // UDS - чтение памяти ЭБУ (ReadMemoryByAddress, 0x23)
+    server.Post("/api/uds/memory/read", [](const httplib::Request& req, httplib::Response& res) {
+        json response;
+
+        try {
+            auto j = json::parse(req.body);
+            uint32_t address = j.value("address", 0u);
+            uint32_t size = j.value("size", 0u);
+            uint32_t tx_id = j.value("tx_id", 0x7E0u);
+            uint32_t rx_id = j.value("rx_id", 0x7E8u);
+
+            std::lock_guard<std::mutex> lock(ecu_mutex);
+            ecu_detector.uds_set_target(tx_id, rx_id);
+            auto data = ecu_detector.uds_read_memory(address, size);
+
+            response = {
+                {"success", !data.empty() || size == 0},
+                {"address", address},
+                {"size", data.size()},
+                {"data", bytes_to_hex(data)}
+            };
+        }
+        catch (const std::exception& e) {
+            response = { {"success", false}, {"error", e.what()} };
+        }
+
+        res.set_content(response.dump(), "application/json");
+        });
+
+    // UDS - запись памяти ЭБУ (RequestDownload/TransferData/RequestTransferExit,
+    // 0x34/0x36/0x37). Вызывающая сторона обязана заранее выполнить вход в
+    // программную сессию (/api/uds/session) и разблокировку
+    // (/api/uds/security/seed + /api/uds/security/key).
+    server.Post("/api/uds/memory/write", [](const httplib::Request& req, httplib::Response& res) {
+        json response;
+
+        try {
+            auto j = json::parse(req.body);
+            uint32_t address = j.value("address", 0u);
+            std::string data_hex = j.value("data", "");
+            auto data = OBDConnector::hex_to_bytes(data_hex);
+
+            std::lock_guard<std::mutex> lock(ecu_mutex);
+            bool success = ecu_detector.uds_write_memory(address, data);
+
+            response = { {"success", success}, {"address", address}, {"bytes_written", data.size()} };
         }
         catch (const std::exception& e) {
             response = { {"success", false}, {"error", e.what()} };

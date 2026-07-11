@@ -25,6 +25,76 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class _HttpUdsTransport:
+    """
+    Адаптер HTTP API C++ бэкенда (ELM327/CAN-путь) под тот же интерфейс
+    (enter_session/request_seed/send_key/read_memory/write_memory), что и
+    J2534PassThru — чтобы security_access.unlock_security() и вызывающий код
+    в UI работали одинаково независимо от типа адаптера.
+    """
+
+    def __init__(self, base_url: str):
+        self.base_url = base_url
+
+    def enter_session(self, session_type: int, ecu_addr: int = 0x7E0, ecu_resp: int = 0x7E8) -> bool:
+        try:
+            r = requests.post(f"{self.base_url}/uds/session",
+                               json={"session_type": session_type, "tx_id": ecu_addr, "rx_id": ecu_resp},
+                               timeout=10)
+            return bool(r.ok and r.json().get("success"))
+        except Exception as e:
+            logger.error(f"HTTP uds/session: {e}")
+            return False
+
+    def request_seed(self, access_level: int, ecu_addr: int = 0x7E0):
+        try:
+            r = requests.post(f"{self.base_url}/uds/security/seed",
+                               json={"access_level": access_level}, timeout=10)
+            if not r.ok:
+                return None
+            j = r.json()
+            if not j.get("success"):
+                return None
+            return "" if j.get("already_unlocked") else j.get("seed", "")
+        except Exception as e:
+            logger.error(f"HTTP uds/security/seed: {e}")
+            return None
+
+    def send_key(self, access_level: int, key_hex: str, ecu_addr: int = 0x7E0) -> bool:
+        try:
+            r = requests.post(f"{self.base_url}/uds/security/key",
+                               json={"access_level": access_level, "key": key_hex}, timeout=10)
+            return bool(r.ok and r.json().get("success"))
+        except Exception as e:
+            logger.error(f"HTTP uds/security/key: {e}")
+            return False
+
+    def read_memory(self, address: int, size: int, ecu_addr: int = 0x7E0,
+                     ecu_resp: int = 0x7E8, **_kw):
+        try:
+            r = requests.post(f"{self.base_url}/uds/memory/read",
+                               json={"address": address, "size": size,
+                                     "tx_id": ecu_addr, "rx_id": ecu_resp},
+                               timeout=60)
+            if not r.ok:
+                return None
+            j = r.json()
+            return j.get("data") if j.get("success") else None
+        except Exception as e:
+            logger.error(f"HTTP uds/memory/read: {e}")
+            return None
+
+    def write_memory(self, address: int, data_hex: str, ecu_addr: int = 0x7E0, **_kw) -> bool:
+        try:
+            r = requests.post(f"{self.base_url}/uds/memory/write",
+                               json={"address": address, "data": data_hex},
+                               timeout=120)
+            return bool(r.ok and r.json().get("success"))
+        except Exception as e:
+            logger.error(f"HTTP uds/memory/write: {e}")
+            return False
+
+
 class ECUAPIClient(QObject):
     connection_status_changed = pyqtSignal(dict)
     ports_update = pyqtSignal(list)
@@ -49,7 +119,17 @@ class ECUAPIClient(QObject):
         self.logger_queue = []  # Очередь для сообщений лога
         self.logger_timer = None
         self._j2534 = None     # Активное J2534 соединение (J2534PassThru | None)
+        self._security_provider = None  # SecurityKeyProvider | None (см. set_security_provider)
         logger.info(f"API Client инициализирован: {self.base_url}")
+
+    def set_security_provider(self, provider) -> None:
+        """
+        Подключает реальный алгоритм Security Access (seed→key) для write_memory().
+        provider — экземпляр security_access.SecurityKeyProvider. Без вызова этого
+        метода write_memory() откажет с понятной ошибкой (см. security_access.NoKeyProvider) —
+        ни один готовый алгоритм в этот проект не входит.
+        """
+        self._security_provider = provider
 
     @property
     def is_connected(self):
@@ -397,6 +477,72 @@ class ECUAPIClient(QObject):
         except Exception as e:
             logger.error(f"Исключение J2534 connect: {e}")
             return {"success": False, "error": str(e)}
+
+    def _uds_transport(self):
+        """Возвращает объект с интерфейсом enter_session/request_seed/send_key/
+        read_memory/write_memory — J2534PassThru при J2534-соединении, иначе
+        HTTP-адаптер к C++ бэкенду (ELM327/CAN)."""
+        with self.lock:
+            j2534 = self._j2534
+        if j2534 is not None:
+            return j2534
+        return _HttpUdsTransport(self.base_url)
+
+    def read_memory(self, address: int, size: int,
+                     ecu_addr: int = 0x7E0, ecu_resp: int = 0x7E8):
+        """
+        Читает size байт памяти ЭБУ, начиная с address (UDS ReadMemoryByAddress).
+        Возвращает bytes при успехе, None при ошибке/обрыве связи. Работает как
+        через J2534, так и через ELM327/CAN (см. _HttpUdsTransport).
+        """
+        transport = self._uds_transport()
+        try:
+            hex_data = transport.read_memory(address, size, ecu_addr=ecu_addr, ecu_resp=ecu_resp)
+        except Exception as e:
+            logger.error(f"read_memory: {e}")
+            return None
+        if hex_data is None:
+            return None
+        try:
+            return bytes.fromhex(hex_data)
+        except ValueError:
+            logger.error(f"read_memory: некорректный hex в ответе: {hex_data!r}")
+            return None
+
+    def write_memory(self, address: int, data: bytes,
+                      ecu_addr: int = 0x7E0, ecu_resp: int = 0x7E8,
+                      session_type: int = 0x02, access_level: int = 0x11) -> bool:
+        """
+        Полный цикл записи памяти ЭБУ: вход в программную сессию, разблокировка
+        Security Access (нужен провайдер ключа — см. set_security_provider) и
+        запись через RequestDownload/TransferData/RequestTransferExit.
+
+        Работает как через J2534, так и через ELM327/CAN. Требует реальный
+        провайдер ключа: без него откажет с понятной ошибкой (security_access.NoKeyProvider),
+        а не притворится, что запись прошла.
+        """
+        from security_access import unlock_security, NoKeyProvider, SecurityAccessError
+
+        transport = self._uds_transport()
+        provider = self._security_provider or NoKeyProvider()
+
+        if not transport.enter_session(session_type, ecu_addr=ecu_addr, ecu_resp=ecu_resp):
+            logger.error("write_memory: не удалось войти в программную сессию (0x10)")
+            return False
+
+        try:
+            if not unlock_security(transport, hex(ecu_addr), access_level, provider, ecu_addr=ecu_addr):
+                logger.error("write_memory: Security Access отклонён ЭБУ")
+                return False
+        except SecurityAccessError as e:
+            logger.error(f"write_memory: {e}")
+            return False
+
+        try:
+            return bool(transport.write_memory(address, data.hex(), ecu_addr=ecu_addr))
+        except Exception as e:
+            logger.error(f"write_memory: {e}")
+            return False
 
     def connect_to_port(self, port_info):
         # J2534 PassThru — работает напрямую через DLL, без HTTP-бэкенда
