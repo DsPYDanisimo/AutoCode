@@ -781,10 +781,10 @@ class ConnectionStatusWidget(QFrame):
 class SettingsDialog(QDialog):
     """Окно настроек приложения"""
 
-    def __init__(self, settings: QSettings, parent=None):
+    def __init__(self, settings: QSettings, lang: str = "ru", parent=None):
         super().__init__(parent)
         self.settings = settings
-        self._tr = get_tr("ru")
+        self._tr = get_tr(lang)
         self.setWindowTitle(self._tr["settings_title"])
         self.setMinimumWidth(480)
         self.setModal(True)
@@ -934,9 +934,10 @@ class SettingsDialog(QDialog):
         self.chk_confirm_clear.setChecked(self.settings.value("ui/confirm_clear_dtc", True, bool))
         lay.addRow(self._tr["set_confirm_clear"], self.chk_confirm_clear)
 
-        self.chk_confirm_write_cal = QCheckBox()
-        self.chk_confirm_write_cal.setChecked(self.settings.value("ui/confirm_write_cal", True, bool))
-        lay.addRow(self._tr["set_confirm_write"], self.chk_confirm_write_cal)
+        self.combo_language = QComboBox()
+        self.combo_language.addItems(["Русский", "English"])
+        self.combo_language.setCurrentIndex(1 if self.settings.value("ui/language", "ru") == "en" else 0)
+        lay.addRow(self._tr["set_language"], self.combo_language)
 
         return w
 
@@ -946,16 +947,15 @@ class SettingsDialog(QDialog):
         lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(8)
 
-        title = QLabel("Диагностика и калибровка ЭБУ")
+        title = QLabel(self._tr["about_title"])
         title.setStyleSheet("font-size:16px; font-weight:bold;")
         lay.addWidget(title)
 
         info_lines = [
-            ("Версия", "1.0.0"),
-            ("Протоколы", "OBD-II, UDS (ISO 14229), J2534/PassThru"),
-            ("Интерфейс", "PyQt5"),
-            ("База DTC", "ISO 15031 / SAE J2012"),
-            
+            (self._tr["about_version"], "1.0.0"),
+            (self._tr["about_protocols"], "OBD-II, UDS (ISO 14229), J2534/PassThru"),
+            (self._tr["about_interface"], "PyQt5"),
+            (self._tr["about_dtc_db"], "ISO 15031 / SAE J2012"),
         ]
         for label, val in info_lines:
             row = QLabel(f"<b>{label}:</b>  {val}")
@@ -964,10 +964,7 @@ class SettingsDialog(QDialog):
 
         lay.addStretch()
 
-        note = QLabel(
-            "⚠️ Запись калибровки в ЭБУ необратима.\n"
-            "Используйте только при наличии резервной копии прошивки."
-        )
+        note = QLabel(self._tr["about_warning"])
         note.setStyleSheet("color:#ff9800; font-size:11px;")
         note.setWordWrap(True)
         lay.addWidget(note)
@@ -1219,7 +1216,7 @@ Drosselklappenstellung, Spannung, Luftmasse, Ansaugtemperatur, Kraftstoffdruck.<
         s.setValue("ui/log_timestamps",       self.chk_log_timestamps.isChecked())
         s.setValue("ui/log_level",            self.combo_log_level.currentText())
         s.setValue("ui/confirm_clear_dtc",    self.chk_confirm_clear.isChecked())
-        s.setValue("ui/confirm_write_cal",    self.chk_confirm_write_cal.isChecked())
+        s.setValue("ui/language",             "en" if self.combo_language.currentIndex() == 1 else "ru")
 
         self.accept()
 
@@ -1436,6 +1433,8 @@ class ECU_DiagnosticApp(QMainWindow):
         self.settings = QSettings("ECU_Diagnostic", "Settings")
         self.is_connected = False
         self._all_dtc_errors: list = []   # все считанные DTC (для фильтрации без перечитывания)
+        self._lang = self.settings.value("ui/language", "ru")
+        self._tr = get_tr(self._lang)
         self.init_ui()
         self.setup_connections()
         
@@ -1460,7 +1459,7 @@ class ECU_DiagnosticApp(QMainWindow):
         logger.info("Приложение запущено")
         
     def init_ui(self):
-        self.setWindowTitle("Диагностика и калибровка ЭБУ автомобилей v1.0")
+        self.setWindowTitle(self._tr["app_title"])
         self.setMinimumSize(700, 520)
 
         # Восстанавливаем геометрию из прошлого сеанса
@@ -1523,19 +1522,19 @@ class ECU_DiagnosticApp(QMainWindow):
         # Строка 1: тип порта + устройство + scan-кнопки
         row1 = QHBoxLayout()
         row1.setSpacing(4)
-        lbl_type = QLabel("Тип:")
+        lbl_type = QLabel(self._tr["lbl_type"])
         lbl_type.setStyleSheet("color:#aaa; font-size:11px;")
         lbl_type.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         row1.addWidget(lbl_type)
         self.port_type_combo = QComboBox()
-        self.port_type_combo.addItems(["Все", "Serial (COM)", "TCP/IP", "Bluetooth", "J2534/PassThru"])
+        self.port_type_combo.addItems([self._tr["port_all"], "Serial (COM)", "TCP/IP", "Bluetooth", "J2534/PassThru"])
         self.port_type_combo.setMinimumWidth(90)
         self.port_type_combo.setMaximumWidth(160)
         self.port_type_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.port_type_combo.currentTextChanged.connect(self.filter_ports_by_type)
         row1.addWidget(self.port_type_combo)
 
-        lbl_dev = QLabel("Устройство:")
+        lbl_dev = QLabel(self._tr["lbl_device"])
         lbl_dev.setStyleSheet("color:#aaa; font-size:11px;")
         lbl_dev.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         row1.addWidget(lbl_dev)
@@ -1547,18 +1546,18 @@ class ECU_DiagnosticApp(QMainWindow):
 
         self.port_refresh_btn = QPushButton("🔄")
         self.port_refresh_btn.setFixedWidth(30)
-        self.port_refresh_btn.setToolTip("Обновить список портов")
+        self.port_refresh_btn.setToolTip(self._tr["tt_refresh_ports"])
         self.port_refresh_btn.clicked.connect(self.refresh_ports)
         row1.addWidget(self.port_refresh_btn)
 
         self.bt_scan_btn = QPushButton("📡 BT")
-        self.bt_scan_btn.setToolTip("Поиск Bluetooth-адаптеров")
+        self.bt_scan_btn.setToolTip(self._tr["tt_bt_scan"])
         self.bt_scan_btn.setVisible(False)
         self.bt_scan_btn.clicked.connect(self.scan_bluetooth)
         row1.addWidget(self.bt_scan_btn)
 
         self.j2534_scan_btn = QPushButton("🔍 J2534")
-        self.j2534_scan_btn.setToolTip("Поиск J2534/PassThru адаптеров в реестре Windows")
+        self.j2534_scan_btn.setToolTip(self._tr["tt_j2534_scan"])
         self.j2534_scan_btn.setVisible(False)
         self.j2534_scan_btn.clicked.connect(self.scan_j2534)
         row1.addWidget(self.j2534_scan_btn)
@@ -1567,18 +1566,18 @@ class ECU_DiagnosticApp(QMainWindow):
         # Строка 2: протокол + скорость + кнопки подключения + прогресс
         row2 = QHBoxLayout()
         row2.setSpacing(4)
-        lbl_proto = QLabel("Протокол:")
+        lbl_proto = QLabel(self._tr["lbl_protocol"])
         lbl_proto.setStyleSheet("color:#aaa; font-size:11px;")
         lbl_proto.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         row2.addWidget(lbl_proto)
         self.protocol_combo = QComboBox()
-        self.protocol_combo.addItems(["Автоопределение", "OBD-II", "CAN", "KWP2000", "UDS"])
+        self.protocol_combo.addItems([self._tr["proto_auto"], "OBD-II", "CAN", "KWP2000", "UDS"])
         self.protocol_combo.setMinimumWidth(90)
         self.protocol_combo.setMaximumWidth(160)
         self.protocol_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         row2.addWidget(self.protocol_combo)
 
-        lbl_baud = QLabel("Бод:")
+        lbl_baud = QLabel(self._tr["lbl_baud"])
         lbl_baud.setStyleSheet("color:#aaa; font-size:11px;")
         lbl_baud.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         row2.addWidget(lbl_baud)
@@ -1592,7 +1591,7 @@ class ECU_DiagnosticApp(QMainWindow):
         self.baud_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         row2.addWidget(self.baud_combo)
 
-        self.connect_btn = QPushButton("🔌 Подключить")
+        self.connect_btn = QPushButton(self._tr["btn_connect"])
         self.connect_btn.setStyleSheet(
             "QPushButton{background:#4CAF50;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;}"
             "QPushButton:hover{background:#45a049;}"
@@ -1601,7 +1600,7 @@ class ECU_DiagnosticApp(QMainWindow):
         self.connect_btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         row2.addWidget(self.connect_btn)
 
-        self.disconnect_btn = QPushButton("⛔ Отключить")
+        self.disconnect_btn = QPushButton(self._tr["btn_disconnect"])
         self.disconnect_btn.setStyleSheet(
             "QPushButton{background:#f44336;color:white;font-weight:bold;padding:4px 8px;border-radius:4px;}"
             "QPushButton:hover{background:#da190b;}"
@@ -1628,7 +1627,7 @@ class ECU_DiagnosticApp(QMainWindow):
         # ── Кнопка настроек ───────────────────────────────────────────────────
         settings_btn = QPushButton("⚙️")
         settings_btn.setFixedSize(32, 32)
-        settings_btn.setToolTip("Настройки")
+        settings_btn.setToolTip(self._tr["tt_settings"])
         settings_btn.setStyleSheet(
             "QPushButton{background:#333;color:white;font-size:16px;border-radius:4px;border:1px solid #555;}"
             "QPushButton:hover{background:#444;}"
@@ -1662,11 +1661,11 @@ class ECU_DiagnosticApp(QMainWindow):
 
         # Кнопки действий
         errors_btn_layout = QHBoxLayout()
-        self.read_errors_btn = QPushButton("📋 Считать ошибки")
+        self.read_errors_btn = QPushButton(self._tr["btn_read_errors"])
         self.read_errors_btn.clicked.connect(self.read_error_codes)
-        self.clear_errors_btn = QPushButton("🗑️ Стереть ошибки")
+        self.clear_errors_btn = QPushButton(self._tr["btn_clear_errors"])
         self.clear_errors_btn.clicked.connect(self.clear_error_codes)
-        self.dtc_database_btn = QPushButton("📚 База DTC")
+        self.dtc_database_btn = QPushButton(self._tr["btn_dtc_db"])
         self.dtc_database_btn.clicked.connect(self.open_dtc_database)
 
         errors_btn_layout.addWidget(self.read_errors_btn)
@@ -1679,31 +1678,31 @@ class ECU_DiagnosticApp(QMainWindow):
         filter_layout = QHBoxLayout()
         filter_layout.setSpacing(8)
 
-        filter_layout.addWidget(QLabel("Статус:"))
+        filter_layout.addWidget(QLabel(self._tr["lbl_status"]))
         self._dtc_status_filter = QComboBox()
         self._dtc_status_filter.addItems(
-            ["Все", "Active", "Confirmed", "Pending", "Historical", "Stored"])
+            [self._tr["port_all"], "Active", "Confirmed", "Pending", "Historical", "Stored"])
         self._dtc_status_filter.setFixedWidth(110)
         self._dtc_status_filter.currentTextChanged.connect(self._apply_dtc_filter)
         filter_layout.addWidget(self._dtc_status_filter)
 
-        filter_layout.addWidget(QLabel("Система:"))
+        filter_layout.addWidget(QLabel(self._tr["lbl_system"]))
         self._dtc_system_filter = QComboBox()
         self._dtc_system_filter.addItems(
-            ["Все", "Трансмиссия/Двигатель", "Шасси", "Кузов", "Сеть CAN"])
+            [self._tr["port_all"], "Трансмиссия/Двигатель", "Шасси", "Кузов", "Сеть CAN"])
         self._dtc_system_filter.setFixedWidth(175)
         self._dtc_system_filter.currentTextChanged.connect(self._apply_dtc_filter)
         filter_layout.addWidget(self._dtc_system_filter)
 
-        filter_layout.addWidget(QLabel("Поиск:"))
+        filter_layout.addWidget(QLabel(self._tr["lbl_search"]))
         self._dtc_search = QLineEdit()
-        self._dtc_search.setPlaceholderText("Код или описание…")
+        self._dtc_search.setPlaceholderText(self._tr["ph_search"])
         self._dtc_search.setFixedWidth(160)
         self._dtc_search.textChanged.connect(self._apply_dtc_filter)
         filter_layout.addWidget(self._dtc_search)
 
         filter_layout.addStretch()
-        self._dtc_count_label = QLabel("Нет данных")
+        self._dtc_count_label = QLabel(self._tr["no_data"])
         self._dtc_count_label.setStyleSheet("color: gray; font-size: 11px;")
         filter_layout.addWidget(self._dtc_count_label)
         errors_layout.addLayout(filter_layout)
@@ -1712,7 +1711,8 @@ class ECU_DiagnosticApp(QMainWindow):
         self.errors_table = QTableWidget()
         self.errors_table.setColumnCount(6)
         self.errors_table.setHorizontalHeaderLabels(
-            ["Код", "Описание", "Статус", "Источник", "Система", "Тяжесть"])
+            [self._tr["col_code"], self._tr["col_desc"], self._tr["col_status"],
+             self._tr["col_source"], self._tr["col_system"], self._tr["col_severity"]])
         hdr = self.errors_table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setStretchLastSection(False)
@@ -1732,16 +1732,16 @@ class ECU_DiagnosticApp(QMainWindow):
             "Наведите курсор на строку для просмотра возможных причин.")
         errors_layout.addWidget(self.errors_table)
 
-        self.diagnostic_tabs.addTab(errors_tab, "Коды ошибок")
-        
+        self.diagnostic_tabs.addTab(errors_tab, self._tr["tab_errors"])
+
         # Вкладка Live данных
         live_tab = QWidget()
         live_layout = QVBoxLayout(live_tab)
-        
+
         live_btn_layout = QHBoxLayout()
-        self.start_live_btn = QPushButton("▶️ Запустить мониторинг")
+        self.start_live_btn = QPushButton(self._tr["btn_start_live"])
         self.start_live_btn.clicked.connect(self.start_live_monitoring)
-        self.stop_live_btn = QPushButton("⏹️ Остановить")
+        self.stop_live_btn = QPushButton(self._tr["btn_stop_live"])
         self.stop_live_btn.clicked.connect(self.stop_live_monitoring)
         self.stop_live_btn.setEnabled(False)
         
@@ -1754,14 +1754,14 @@ class ECU_DiagnosticApp(QMainWindow):
         # Контейнер с сеткой параметров; обёрнут в QScrollArea —
         # при маленьком окне появляется полоса прокрутки вместо обрезания
         params = [
-            ("Обороты двигателя", "rpm", "0 об/мин"),
-            ("Скорость", "speed", "0 км/ч"),
-            ("Температура ОЖ", "coolant", "0°C"),
-            ("Положение дросселя", "throttle", "0%"),
-            ("Напряжение", "voltage", "0.0V"),
-            ("Расход воздуха", "maf", "0.0 г/с"),
-            ("Температура впуска", "intake", "0°C"),
-            ("Давление топлива", "fuel_pressure", "0 кПа")
+            (self._tr["live_rpm"], "rpm", "0 об/мин"),
+            (self._tr["live_speed"], "speed", "0 км/ч"),
+            (self._tr["live_coolant"], "coolant", "0°C"),
+            (self._tr["live_throttle"], "throttle", "0%"),
+            (self._tr["live_voltage"], "voltage", "0.0V"),
+            (self._tr["live_maf"], "maf", "0.0 г/с"),
+            (self._tr["live_intake"], "intake", "0°C"),
+            (self._tr["live_fuel_pressure"], "fuel_pressure", "0 кПа")
         ]
 
         grid_widget = QWidget()
@@ -1793,12 +1793,12 @@ class ECU_DiagnosticApp(QMainWindow):
         scroll.setFrameShape(QFrame.NoFrame)
         live_layout.addWidget(scroll)
         
-        self.diagnostic_tabs.addTab(live_tab, "Live данные")
-        
+        self.diagnostic_tabs.addTab(live_tab, self._tr["tab_live"])
+
         # Вкладка информации
         info_tab = QWidget()
         info_layout = QVBoxLayout(info_tab)
-        
+
         self.info_text = QTextEdit()
         self.info_text.setReadOnly(True)
         self.info_text.setStyleSheet(
@@ -1806,46 +1806,46 @@ class ECU_DiagnosticApp(QMainWindow):
         )
         info_layout.addWidget(self.info_text)
 
-        refresh_info_btn = QPushButton("🔄 Обновить информацию")
+        refresh_info_btn = QPushButton(self._tr["btn_refresh_info"])
         refresh_info_btn.clicked.connect(self.show_ecu_info)
         info_layout.addWidget(refresh_info_btn)
-        
-        self.diagnostic_tabs.addTab(info_tab, "Информация ЭБУ")
+
+        self.diagnostic_tabs.addTab(info_tab, self._tr["tab_info"])
 
         # ── Вкладка калибровки ────────────────────────────────────────────────
         cal_tab = QWidget()
         cal_tab_layout = QVBoxLayout(cal_tab)
         cal_tab_layout.setContentsMargins(8, 8, 8, 8)
 
-        calibration_group = QGroupBox("Калибровка параметров (Stage 1)")
+        calibration_group = QGroupBox(self._tr["grp_calibration"])
         cal_inner_layout = QVBoxLayout()
         cal_inner_layout.setSpacing(8)
 
         load_row = QHBoxLayout()
-        load_row.addWidget(QLabel("Активная калибровка:"))
-        self.active_cal_label = QLabel("⚠️  Не загружена — считайте калибровку с ЭБУ")
+        load_row.addWidget(QLabel(self._tr["lbl_active_cal"]))
+        self.active_cal_label = QLabel(self._tr["cal_not_loaded"])
         self.active_cal_label.setStyleSheet("color: #ff9800; font-weight: bold;")
         load_row.addWidget(self.active_cal_label, 1)
 
-        self.backup_ecu_btn = QPushButton("📥 Считать с ЭБУ")
+        self.backup_ecu_btn = QPushButton(self._tr["btn_read_ecu"])
         self.backup_ecu_btn.setToolTip("Считать прошивку/калибровку с подключённого ЭБУ и загрузить в редактор")
         self.backup_ecu_btn.clicked.connect(self.backup_ecu_data)
         load_row.addWidget(self.backup_ecu_btn)
 
-        self.load_backup_btn = QPushButton("📂 Из бэкапа")
+        self.load_backup_btn = QPushButton(self._tr["btn_load_backup"])
         self.load_backup_btn.setToolTip("Загрузить сохранённый файл калибровки из папки бэкапов")
         self.load_backup_btn.clicked.connect(self.load_calibration_from_backup)
         load_row.addWidget(self.load_backup_btn)
         cal_inner_layout.addLayout(load_row)
 
         params_layout = QHBoxLayout()
-        self.ignition_timing_btn = QPushButton("⏱️ Угол зажигания")
+        self.ignition_timing_btn = QPushButton(self._tr["btn_ignition"])
         self.ignition_timing_btn.clicked.connect(lambda: self.adjust_parameter("ignition_timing"))
-        self.fuel_map_btn = QPushButton("⛽ Топливная карта")
+        self.fuel_map_btn = QPushButton(self._tr["btn_fuel_map"])
         self.fuel_map_btn.clicked.connect(lambda: self.adjust_parameter("fuel_map"))
-        self.boost_control_btn = QPushButton("💨 Управление турбиной")
+        self.boost_control_btn = QPushButton(self._tr["btn_boost"])
         self.boost_control_btn.clicked.connect(lambda: self.adjust_parameter("boost_control"))
-        self.rev_limit_btn = QPushButton("⏫ Ограничитель оборотов")
+        self.rev_limit_btn = QPushButton(self._tr["btn_rev_limit"])
         self.rev_limit_btn.clicked.connect(lambda: self.adjust_parameter("rev_limit"))
 
         for btn in [self.ignition_timing_btn, self.fuel_map_btn,
@@ -1856,16 +1856,16 @@ class ECU_DiagnosticApp(QMainWindow):
         cal_inner_layout.addLayout(params_layout)
 
         write_layout = QHBoxLayout()
-        self.write_calibration_btn = QPushButton("✍️ Записать в ЭБУ")
+        self.write_calibration_btn = QPushButton(self._tr["btn_write_ecu"])
         self.write_calibration_btn.setStyleSheet("background-color: #555; color: #888;")
         self.write_calibration_btn.setEnabled(False)
         self.write_calibration_btn.clicked.connect(self.write_calibration)
 
-        self.reset_changes_btn = QPushButton("↩️ Сбросить изменения")
+        self.reset_changes_btn = QPushButton(self._tr["btn_reset_changes"])
         self.reset_changes_btn.setEnabled(False)
         self.reset_changes_btn.clicked.connect(self.reset_calibration_changes)
 
-        self.restore_backup_btn = QPushButton("🔄 Восстановить из бэкапа")
+        self.restore_backup_btn = QPushButton(self._tr["btn_restore_backup"])
         self.restore_backup_btn.clicked.connect(self.restore_from_backup)
 
         write_layout.addWidget(self.write_calibration_btn)
@@ -1877,7 +1877,7 @@ class ECU_DiagnosticApp(QMainWindow):
         calibration_group.setLayout(cal_inner_layout)
         cal_tab_layout.addWidget(calibration_group)
         cal_tab_layout.addStretch()
-        self.diagnostic_tabs.addTab(cal_tab, "Калибровка")
+        self.diagnostic_tabs.addTab(cal_tab, self._tr["tab_calibration"])
 
         top_layout.addWidget(self.diagnostic_tabs)
         main_splitter.addWidget(top_widget)
@@ -1887,7 +1887,7 @@ class ECU_DiagnosticApp(QMainWindow):
         bottom_layout = QVBoxLayout(bottom_widget)
 
         # Лог событий
-        log_group = QGroupBox("Лог событий")
+        log_group = QGroupBox(self._tr["grp_log"])
         log_layout = QVBoxLayout()
         
         self.event_log = QTextEdit()
@@ -1913,10 +1913,10 @@ class ECU_DiagnosticApp(QMainWindow):
         # Нижняя панель кнопок
         bottom_buttons_layout = QHBoxLayout()
 
-        self.help_btn = QPushButton("❓ Справка")
+        self.help_btn = QPushButton(self._tr["btn_help"])
         self.help_btn.clicked.connect(self.open_help)
 
-        self.export_log_btn = QPushButton("📤 Экспорт логов")
+        self.export_log_btn = QPushButton(self._tr["btn_export_log"])
         self.export_log_btn.clicked.connect(self.export_logs)
 
         bottom_buttons_layout.addWidget(self.help_btn)
@@ -2436,33 +2436,37 @@ class ECU_DiagnosticApp(QMainWindow):
         total  = len(self._all_dtc_errors)
         shown  = len(filtered)
         self._dtc_count_label.setText(
-            f"Показано: {shown} из {total}" if shown != total else f"Всего: {total}"
+            self._tr["dtc_shown"].format(shown=shown, total=total) if shown != total
+            else self._tr["dtc_total"].format(total=total)
         )
     
     def clear_error_codes(self):
-        reply = QMessageBox.question(self, "Подтверждение",
-                                     "Вы уверены, что хотите стереть коды ошибок?",
-                                     QMessageBox.Yes | QMessageBox.No)
+        confirm_needed = self.settings.value("ui/confirm_clear_dtc", True, bool)
+        if confirm_needed:
+            reply = QMessageBox.question(self, "Подтверждение",
+                                         "Вы уверены, что хотите стереть коды ошибок?",
+                                         QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
 
-        if reply == QMessageBox.Yes:
-            logger.info("Стирание ошибок...")
-            self.log_event("🗑️ Стирание ошибок...")
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(50)
+        logger.info("Стирание ошибок...")
+        self.log_event("🗑️ Стирание ошибок...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(50)
 
-            success = self.api_client.clear_errors()
+        success = self.api_client.clear_errors()
 
-            self.progress_bar.setValue(100)
-            if success:
-                self.errors_table.setRowCount(1)
-                self.errors_table.setItem(0, 1, QTableWidgetItem("Ошибки стерты"))
-                logger.info("Ошибки стерты")
-                self.log_event("✅ Ошибки стерты")
-            else:
-                logger.warning("Не удалось стереть ошибки")
-                self.log_event("❌ Не удалось стереть ошибки")
-                QMessageBox.warning(self, "Ошибка", "Не удалось стереть ошибки. Проверьте подключение.")
-            QTimer.singleShot(400, lambda: self.progress_bar.setVisible(False))
+        self.progress_bar.setValue(100)
+        if success:
+            self.errors_table.setRowCount(1)
+            self.errors_table.setItem(0, 1, QTableWidgetItem("Ошибки стерты"))
+            logger.info("Ошибки стерты")
+            self.log_event("✅ Ошибки стерты")
+        else:
+            logger.warning("Не удалось стереть ошибки")
+            self.log_event("❌ Не удалось стереть ошибки")
+            QMessageBox.warning(self, "Ошибка", "Не удалось стереть ошибки. Проверьте подключение.")
+        QTimer.singleShot(400, lambda: self.progress_bar.setVisible(False))
     
     def start_live_monitoring(self):
         logger.info("Запуск live мониторинга")
@@ -2782,54 +2786,77 @@ class ECU_DiagnosticApp(QMainWindow):
             self._update_calibration_ui_state()
             self.log_event("↩️ Изменения калибровки сброшены")
 
+    def _confirm_irreversible(self, title: str, body: str) -> bool:
+        """Требует набрать кодовое слово, прежде чем разрешить необратимое действие."""
+        word = self._tr["confirm_word"]
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setModal(True)
+        lay = QVBoxLayout(dlg)
+
+        msg = QLabel(body)
+        msg.setWordWrap(True)
+        lay.addWidget(msg)
+
+        hint = QLabel(self._tr["confirm_word_hint"].format(word=word))
+        hint.setStyleSheet("color:#ff9800; font-weight:bold;")
+        lay.addWidget(hint)
+
+        edit = QLineEdit()
+        lay.addWidget(edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok_btn = buttons.button(QDialogButtonBox.Ok)
+        ok_btn.setEnabled(False)
+        edit.textChanged.connect(
+            lambda text: ok_btn.setEnabled(text.strip().upper() == word.upper())
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        lay.addWidget(buttons)
+
+        return dlg.exec_() == QDialog.Accepted
+
     def write_calibration(self):
         if not self.active_calibration or not self.active_calibration.is_dirty:
             return
-        reply = QMessageBox.warning(
-            self, "ВНИМАНИЕ!",
-            "Запись калибровки в ЭБУ может привести к:\n"
-            "• Потере гарантии\n"
-            "• Повреждению двигателя\n"
-            "• Неисправности автомобиля\n\n"
-            "Продолжить?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            logger.warning("Начало записи калибровки в ЭБУ")
-            self.log_event("✍️ Запись калибровки в ЭБУ...")
-            self.progress_bar.setVisible(True)
-            for i in range(1, 11):
-                QTimer.singleShot(i * 80, lambda p=i*10: self.progress_bar.setValue(p))
-            QTimer.singleShot(900, self._finish_write_calibration)
+        if not self._confirm_irreversible(self._tr["write_ecu_title"], self._tr["write_ecu_body"]):
+            return
+        logger.warning("Начало записи калибровки в ЭБУ")
+        self.log_event("✍️ Запись калибровки в ЭБУ...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # неопределённый прогресс — реальная запись не реализована
+        QTimer.singleShot(700, self._finish_write_calibration)
 
     def _finish_write_calibration(self):
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
-        logger.info("Калибровка записана в ЭБУ")
-        QMessageBox.information(self, "Успех", "✅ Калибровка успешно записана в ЭБУ!")
-        self.log_event("✅ Калибровка записана в ЭБУ")
+        logger.info("Калибровка сохранена в редакторе (демо-режим, без записи в ЭБУ)")
+        QMessageBox.information(self, self._tr["write_ecu_title"], self._tr["write_ecu_done"])
+        self.log_event("✅ Изменения сохранены (демо-режим)")
         QTimer.singleShot(400, lambda: self.progress_bar.setVisible(False))
 
     def restore_from_backup(self):
-        reply = QMessageBox.question(
-            self, "Восстановление",
-            "Восстановить оригинальную прошивку ЭБУ из резервной копии?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            logger.info("Восстановление ЭБУ из бэкапа")
-            self.log_event("🔄 Восстановление ЭБУ из бэкапа...")
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(50)
-            QTimer.singleShot(400, lambda: self.progress_bar.setValue(100))
-            QTimer.singleShot(500, lambda: QMessageBox.information(
-                self, "Восстановление", "✅ ЭБУ восстановлен из резервной копии"))
-            logger.info("ЭБУ восстановлен из бэкапа")
-            self.log_event("✅ ЭБУ восстановлен из бэкапа")
-            QTimer.singleShot(900, lambda: self.progress_bar.setVisible(False))
+        if not self._confirm_irreversible(self._tr["restore_backup_title"], self._tr["restore_backup_body"]):
+            return
+        logger.info("Восстановление ЭБУ из бэкапа")
+        self.log_event("🔄 Восстановление ЭБУ из бэкапа...")
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # неопределённый прогресс — реальное восстановление не реализовано
+        QTimer.singleShot(700, self._finish_restore_backup)
+
+    def _finish_restore_backup(self):
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        logger.info("Калибровка заменена данными бэкапа (демо-режим, без записи в ЭБУ)")
+        QMessageBox.information(self, self._tr["restore_backup_title"], self._tr["restore_backup_done"])
+        self.log_event("✅ Восстановлено из резервной копии (демо-режим)")
+        QTimer.singleShot(400, lambda: self.progress_bar.setVisible(False))
     
     def open_settings(self):
         self.log_event("⚙️ Открытие настроек...")
-        dlg = SettingsDialog(self.settings, self)
+        prev_lang = self._lang
+        dlg = SettingsDialog(self.settings, self._lang, self)
         if dlg.exec_() == QDialog.Accepted:
             # Применяем настройки немедленно
             self.protocol_combo.setCurrentText(
@@ -2839,6 +2866,12 @@ class ECU_DiagnosticApp(QMainWindow):
                 self.settings.value("conn/default_baud", "115200")
             )
             self.log_event("✅ Настройки сохранены")
+
+            new_lang = self.settings.value("ui/language", "ru")
+            if new_lang != prev_lang:
+                QMessageBox.information(
+                    self, self._tr["restart_required_title"], self._tr["restart_required_body"]
+                )
     
     def open_help(self):
         self.log_event("❓ Открытие справки...")

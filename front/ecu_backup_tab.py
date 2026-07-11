@@ -653,14 +653,14 @@ class FirmwareReadWorker(QThread):
         "Calibration": 256 * 1024,        # 256 КБ
     }
     STEPS = [
-        (5,  "Инициализация соединения с ЭБУ…"),
-        (15, "Идентификация блока управления…"),
-        (25, "Авторизация сессии считывания…"),
-        (40, "Считывание Flash-памяти…"),
-        (60, "Считывание EEPROM…"),
-        (75, "Считывание калибровочных карт…"),
-        (90, "Верификация контрольных сумм…"),
-        (98, "Сохранение файла…"),
+        (5,  "[Демо] Инициализация соединения с ЭБУ…"),
+        (15, "[Демо] Идентификация блока управления…"),
+        (25, "[Демо] Авторизация сессии считывания…"),
+        (40, "[Демо] Генерация случайных данных вместо Flash-памяти…"),
+        (60, "[Демо] Генерация случайных данных вместо EEPROM…"),
+        (75, "[Демо] Генерация случайных калибровочных карт…"),
+        (90, "[Демо] Верификация контрольных сумм…"),
+        (98, "[Демо] Сохранение файла…"),
     ]
 
     def __init__(self, dst_path: str, read_type: str):
@@ -740,6 +740,17 @@ class ECUReadBackupDialog(QDialog):
         inner = QVBoxLayout(page)
         inner.setSpacing(10)
         inner.setContentsMargins(10, 10, 10, 10)
+
+        # ── Демо-баннер ──────────────────────────────────────────────────
+        demo_banner = QLabel(
+            "⚠️ Демо-режим: реальное считывание прошивки с ЭБУ ещё не реализовано. "
+            "Файл ниже будет заполнен случайными данными и НЕ пригоден для восстановления реального автомобиля."
+        )
+        demo_banner.setWordWrap(True)
+        demo_banner.setStyleSheet(
+            "background:#4a3300; color:#ffc107; padding:8px; border-radius:4px; font-weight:bold;"
+        )
+        inner.addWidget(demo_banner)
 
         # ── 1. Статус подключения ─────────────────────────────────────────
         conn_group = QGroupBox("Подключённый ЭБУ")
@@ -907,18 +918,18 @@ class ECUReadBackupDialog(QDialog):
         meta.save()
         self.table_widget.refresh()
 
-        msg = f"Бэкап считан и сохранён: {filename} ({read_type}, {info['size_human']})"
-        self.log_event_requested.emit(f"[Бэкап] {msg}")
-        self.lbl_progress_status.setText(f"✅ {msg}")
+        msg = f"Демо-файл сгенерирован и сохранён: {filename} ({read_type}, {info['size_human']})"
+        self.log_event_requested.emit(f"[Бэкап][Демо] {msg}")
+        self.lbl_progress_status.setText(f"✅ {msg} (демо-режим)")
         self.lbl_progress_status.setStyleSheet("color: #66bb6a;")
         self.btn_read.setEnabled(True)
         self.backup_created.emit(filename)
 
         QMessageBox.information(
-            self, "Бэкап создан",
-            f"✅ Прошивка успешно считана с ЭБУ и сохранена:\n\n"
+            self, "Демо-бэкап создан",
+            f"⚠️ Это демо-режим: файл заполнен случайными данными, а НЕ реальной прошивкой ЭБУ.\n\n"
             f"Файл: {filename}\nТип: {read_type}\nРазмер: {info['size_human']}\n\n"
-            f"Калибровка загружена в редактор — можно настраивать параметры."
+            f"Реальное считывание прошивки с ЭБУ в этой версии программы не реализовано."
         )
 
     def _on_error(self, msg: str):
