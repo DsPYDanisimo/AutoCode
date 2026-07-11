@@ -334,7 +334,8 @@ void Database::create_tables_if_not_exist() {
     // Заполняем базовыми DTC кодами, если таблица пуста
     if (is_dtc_table_empty()) {
         populate_default_dtc_codes();
-        initialize_extended_dtc_database(); // Добавляем расширенные коды
+        initialize_extended_dtc_database();     // Добавляем расширенные коды
+        initialize_manufacturer_dtc_database();  // Добавляем коды VAG/BMW/Mercedes
     }
 }
 
@@ -1054,6 +1055,129 @@ void Database::initialize_extended_dtc_database() {
 
     std::cout << "Добавлено расширенных DTC кодов: " << success_count
         << " из " << extended_dtcs.size() << std::endl;
+}
+
+void Database::initialize_manufacturer_dtc_database() {
+    std::cout << "Добавление кодов производителей (VAG/BMW/Mercedes)..." << std::endl;
+
+    std::vector<DTCRecord> manufacturer_dtcs = {
+        // ── VAG: Volkswagen / Audi / Skoda / SEAT ───────────────────────────
+        {"P1128", "[VAG] Boost pressure signal implausible/unstable (TSI/TDI)", "Turbocharger",
+         {"Air leak after turbo", "Intercooler leak", "Faulty N75 diverter valve", "Clogged oil separator"},
+         {"Reduced power", "Check engine light"}, 3},
+
+        {"P1136", "[VAG] Long term fuel trim, bank 1: system too lean", "Fuel System",
+         {"Stretched timing chain (EA888/EA111)", "Intake air leak", "Dirty injectors", "Low fuel pressure"},
+         {"Rough idle", "Poor fuel economy"}, 3},
+
+        {"P1279", "[VAG] Boost pressure sensor implausible signal at rest", "Turbocharger",
+         {"Faulty boost pressure sensor", "Vacuum hose leak", "Clogged throttle body"},
+         {"Check engine light"}, 2},
+
+        {"P1336", "[VAG] Engine torque monitoring: adaptation at limit", "Timing",
+         {"Stretched or jumped timing chain", "Incorrect valve timing", "Worn timing chain tensioner"},
+         {"Engine noise", "Reduced power", "Check engine light"}, 4},
+
+        {"P1550", "[VAG] Boost pressure sensor signal out of range/implausible", "Turbocharger",
+         {"Open sensor circuit", "Sensor mechanically damaged", "Miscalibration after repair"},
+         {"Check engine light", "Reduced power"}, 3},
+
+        {"P1602", "[VAG] Power supply terminal 15 (ignition) malfunction", "Electrical",
+         {"Poor ignition switch contact", "Wiring fault on terminal 15", "Weak battery"},
+         {"Intermittent electrical faults"}, 2},
+
+        {"P1611", "[VAG] TCM/DSG control module requests MIL (emissions-related fault)", "Transmission",
+         {"DSG mechatronic fault", "DSG clutch adaptation error", "CAN communication loss with TCM"},
+         {"Harsh shifting", "Check engine light"}, 3},
+
+        {"P1614", "[VAG] Engine control module internal EEPROM fault", "Engine Control Module",
+         {"ECU memory failure", "Improper tuning/chiptuning flash", "Voltage spike on board network"},
+         {"Erratic engine behavior", "Check engine light"}, 3},
+
+        {"P1621", "[VAG] Internal control module fault (limp-home/component protection)", "Engine Control Module",
+         {"ECU overheating", "ECU hardware failure", "Improper software flash"},
+         {"Limp mode", "Reduced power"}, 4},
+
+        {"P1682", "[VAG] Low/unstable on-board supply voltage", "Electrical",
+         {"Weak battery", "Poor engine ground connection", "Faulty alternator"},
+         {"Intermittent electrical faults", "Check engine light"}, 2},
+
+        // ── BMW ───────────────────────────────────────────────────────────
+        {"P1055", "[BMW] VANOS intake solenoid, bank 1: implausible signal", "VANOS (Variable Timing)",
+         {"Contaminated VANOS solenoid", "Low oil pressure", "Clogged VANOS oil passage"},
+         {"Rough idle", "Reduced power"}, 3},
+
+        {"P1093", "[BMW] Low fuel rail pressure, bank 1 (HPFP)", "Fuel System",
+         {"Worn high-pressure fuel pump (N54/N55)", "Faulty fuel pressure regulator", "Clogged fuel filter"},
+         {"Loss of power", "Engine stall", "Check engine light"}, 4},
+
+        {"P1297", "[BMW] Possible large intake system leak (boost pressure implausible)", "Turbocharger",
+         {"Cracked intercooler hose", "Loose intake connection", "Faulty boost pressure sensor"},
+         {"Reduced power", "Check engine light"}, 3},
+
+        {"P1443", "[BMW] EVAP purge valve: circuit malfunction", "EVAP System",
+         {"Open wiring to purge valve", "Valve stuck", "Damaged charcoal canister"},
+         {"Check engine light"}, 2},
+
+        {"P1315", "[BMW] Misfire detected — catalyst damage risk", "Ignition System",
+         {"Faulty ignition coils (N43/N53/N54)", "Worn spark plugs", "Vacuum leak"},
+         {"Rough running", "Check engine light", "Catalyst damage"}, 4},
+
+        {"P1626", "[BMW] Immobilizer synchronization fault (EWS/CAS)", "Immobilizer",
+         {"ECU/key desynchronization", "Weak key battery", "ECU replaced without coding"},
+         {"Engine won't start"}, 2},
+
+        // ── Mercedes-Benz ────────────────────────────────────────────────
+        {"P1088", "[Mercedes] Camshaft timing adjustment implausible, intake (M271/M272)", "Timing",
+         {"Stretched timing chain", "Faulty camshaft adjustment solenoid", "Contaminated oil passage"},
+         {"Rough idle", "Reduced power"}, 3},
+
+        {"P1301", "[Mercedes] Multi-cylinder misfire — possible balance shaft damage (M271)", "Timing",
+         {"Balance shaft gear failure", "Balance shaft chain failure", "Low oil pressure"},
+         {"Severe engine noise", "Engine damage risk"}, 5},
+
+        {"P1417", "[Mercedes] Secondary air injection pump malfunction", "Emission System",
+         {"Seized secondary air pump", "Blown pump fuse", "Leaking valve"},
+         {"Check engine light"}, 2},
+
+        {"P1506", "[Mercedes] Accelerator pedal position sensor implausible signal", "Engine Control Module",
+         {"Worn pedal potentiometer", "Wiring fault", "Poor connector contact"},
+         {"Reduced power", "Check engine light"}, 3},
+
+        {"P1590", "[Mercedes] Torque limited due to boost pressure sensor fault", "Turbocharger",
+         {"Faulty boost pressure sensor", "Intake system leak", "Clogged air filter"},
+         {"Reduced power"}, 3},
+
+        {"P1622", "[Mercedes] SBC (electro-hydraulic brake) control unit malfunction", "Brakes (SBC)",
+         {"Worn SBC hydraulic pump", "High-pressure brake fluid leak", "SBC unit failure (common on W211/R230)"},
+         {"Brake warning light", "Reduced braking assist"}, 5},
+
+        {"P1729", "[Mercedes] Air suspension (Airmatic) control valve malfunction", "Air Suspension",
+         {"Air spring leak", "Suspension compressor failure", "Valve block leak"},
+         {"Vehicle sits low", "Suspension warning light"}, 3},
+
+        {"P1750", "[Mercedes] Transmission shift solenoid circuit malfunction (722.6/722.9)", "Transmission",
+         {"Worn shift solenoid", "Contaminated valve body", "Low transmission fluid"},
+         {"Harsh/delayed shifting"}, 4},
+
+        {"P1810", "[Mercedes] Transmission adaptation fault: valve body pressure out of range", "Transmission",
+         {"Worn valve body", "Contaminated transmission fluid", "Faulty pressure sensor"},
+         {"Harsh shifting", "Check engine light"}, 3},
+
+        {"P1970", "[Mercedes] Cooling fan control module malfunction", "Cooling System",
+         {"Electronic fan module failure", "Fan wiring fault", "Blown fan fuse"},
+         {"Engine overheating risk"}, 3}
+    };
+
+    int success_count = 0;
+    for (const auto& dtc : manufacturer_dtcs) {
+        if (add_dtc_code(dtc)) {
+            success_count++;
+        }
+    }
+
+    std::cout << "Добавлено кодов производителей: " << success_count
+        << " из " << manufacturer_dtcs.size() << std::endl;
 }
 
 void Database::populate_default_dtc_codes() {
